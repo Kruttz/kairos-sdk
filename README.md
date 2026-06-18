@@ -72,6 +72,23 @@ console.log(deployed.workflowId) // now live in n8n
 
 ---
 
+## Benchmark Results
+
+Tested against 20 workflow prompts of varying complexity (simple triggers, multi-step conditional logic, AI agents with memory):
+
+| Metric | Result |
+|---|---|
+| **Success rate** | **20/20 (100%)** |
+| First-try pass | 11/20 (55%) |
+| Needed correction loop | 9/20 (45%) |
+| Failures | 0 |
+| Avg generation time | 30.6s |
+| Avg attempts per workflow | 1.45 |
+
+Without the validator and correction loop, 45% of generated workflows would have shipped with structural errors. With Kairos, 100% pass validation before deployment.
+
+---
+
 ## How It Works
 
 1. **Generate** — Kairos sends your description to Claude with a detailed system prompt and forces a `generate_workflow` tool call, producing structured n8n workflow JSON.

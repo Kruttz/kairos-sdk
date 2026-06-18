@@ -1,0 +1,212 @@
+{
+  "results": [
+    {
+      "prompt": "Every day at 8am, send an email reminder to team@company.com saying \"Stand-up in 30 minutes\"",
+      "success": true,
+      "attempts": 1,
+      "durationMs": 8556,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Daily Stand-up Reminder Email",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a webhook receives a POST request, return a JSON response with { \"status\": \"ok\" }",
+      "success": true,
+      "attempts": 1,
+      "durationMs": 6107,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Webhook POST — Return Status OK",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Every Monday at 9am, post \"Weekly sync time!\" to a Slack channel called #engineering",
+      "success": true,
+      "attempts": 2,
+      "durationMs": 16882,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Weekly Slack Sync Reminder",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a form is submitted via webhook, save the data to a Google Sheet",
+      "success": true,
+      "attempts": 1,
+      "durationMs": 10277,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Webhook Form Submission to Google Sheets",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every hour, make a GET request to https://api.example.com/health and log the result",
+      "success": true,
+      "attempts": 1,
+      "durationMs": 11651,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Hourly Health Check – api.example.com",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Send a Telegram message saying \"Build complete\" when a webhook is triggered",
+      "success": true,
+      "attempts": 2,
+      "durationMs": 16601,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Send Telegram on Webhook Trigger",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every 5 minutes, check https://httpbin.org/status/200 and alert on failure via email",
+      "success": true,
+      "attempts": 1,
+      "durationMs": 17600,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Health Check Every 5 Minutes – Alert on Failure",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When receiving a webhook, extract the \"name\" field and respond with \"Hello, {name}\"",
+      "success": true,
+      "attempts": 1,
+      "durationMs": 8846,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Webhook Hello Response",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Schedule a daily report email at 6pm with a summary from an HTTP API endpoint",
+      "success": true,
+      "attempts": 2,
+      "durationMs": 51739,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Daily Report Email at 6PM",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a webhook with user data, validate the email field, and return success/failure",
+      "success": true,
+      "attempts": 1,
+      "durationMs": 21220,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Webhook User Data — Email Validation",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Receive a webhook with order data, check if total > 100, send a Slack alert for high-value orders, otherwise log to a spreadsheet",
+      "success": true,
+      "attempts": 1,
+      "durationMs": 17636,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Order Webhook — High-Value Alert vs. Spreadsheet Log",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Every morning at 7am, fetch weather data from an API, format it nicely, and post to Slack #general",
+      "success": true,
+      "attempts": 2,
+      "durationMs": 47419,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Daily Weather Report to Slack",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a webhook receives a support ticket, classify priority based on keywords, route high-priority to Slack and low-priority to email",
+      "success": true,
+      "attempts": 1,
+      "durationMs": 37676,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Support Ticket Triage — Slack (High) / Email (Low)",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Receive a webhook POST, call https://httpbin.org/json, merge the response with the original data, and return the combined result",
+      "success": true,
+      "attempts": 1,
+      "durationMs": 13747,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Webhook POST → Fetch JSON → Merge → Respond",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Every day at midnight, fetch all GitHub issues from a repo, filter open ones, and send a summary email",
+      "success": true,
+      "attempts": 2,
+      "durationMs": 59045,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Daily GitHub Issues Summary Email",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When a new email arrives, extract attachments, upload them to S3, and send a confirmation Slack message",
+      "success": true,
+      "attempts": 2,
+      "durationMs": 52508,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Email Attachments to S3 with Slack Confirmation",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Receive a webhook with product data, check inventory levels, send restock alerts for items below threshold",
+      "success": true,
+      "attempts": 2,
+      "durationMs": 77753,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Product Restock Alert Workflow",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Every 30 minutes, poll an RSS feed, check for new entries, and post new items to a Slack channel",
+      "success": true,
+      "attempts": 2,
+      "durationMs": 55051,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "RSS Feed Poller → Slack Notifier",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When triggered by webhook, look up a customer in a database, enrich with external API data, and return the profile",
+      "success": true,
+      "attempts": 1,
+      "durationMs": 32738,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Webhook → Customer Lookup → Enrich → Return Profile",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Receive form submissions via webhook, validate required fields, store valid entries in Airtable, respond with status",
+      "success": true,
+      "attempts": 2,
+      "durationMs": 48245,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "workflowName": "Webhook Form Submission Handler",
+      "credentialsCount": 1
+    }
+  ],
+  "summary": {
+    "total": 20,
+    "successes": 20,
+    "failures": 0,
+    "firstTry": 11,
+    "neededCorrection": 9,
+    "avgDurationMs": 30564.85
+  }
+}
