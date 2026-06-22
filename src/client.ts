@@ -68,7 +68,21 @@ export class Kairos {
     await this.library.initialize()
     const matches = await this.library.search(description)
 
+    if (matches.length > 0) {
+      const top = matches[0]!
+      this.logger.info(`Library: ${matches.length} match(es), top="${top.workflow.description.slice(0, 50)}" score=${top.score.toFixed(2)} mode=${top.mode}`)
+    } else {
+      this.logger.info('Library: no matches (scratch mode)')
+    }
+
     const globalFailureRates = await this.telemetryReader?.getFailureRates() ?? []
+
+    if (globalFailureRates.length > 0) {
+      const highFreq = globalFailureRates.filter((r) => r.rate >= 0.15)
+      if (highFreq.length > 0) {
+        this.logger.info(`Telemetry: ${highFreq.length} high-frequency failure rule(s) will be warned about`)
+      }
+    }
 
     const designResult = await this.designer.design(
       { description, ...(options?.name ? { name: options.name } : {}) },

@@ -152,7 +152,8 @@ export class WorkflowDesigner {
         tool_choice: { type: 'tool', name: 'generate_workflow' },
       })
     } catch (err) {
-      throw new GenerationError('Anthropic API call failed', err)
+      const detail = err instanceof Error ? err.message : String(err)
+      throw new GenerationError(`Anthropic API call failed: ${detail}`, err)
     }
   }
 

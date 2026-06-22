@@ -79,7 +79,7 @@ function createClient(): Kairos {
     library: new FileLibrary(),
     logger: {
       debug: () => {},
-      info: () => {},
+      info: (msg) => console.error(`${msg}`),
       warn: (msg) => console.error(`[warn] ${msg}`),
       error: (msg) => console.error(`[error] ${msg}`),
     },

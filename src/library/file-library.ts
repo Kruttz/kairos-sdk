@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises'
+import { readFile, writeFile, rename, mkdir, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { N8nWorkflow } from '../types/workflow.js'
@@ -161,7 +161,9 @@ export class FileLibrary implements IWorkflowLibrary {
   private persist(): Promise<void> {
     this.writeQueue = this.writeQueue.then(async () => {
       const indexPath = join(this.dir, 'index.json')
-      await writeFile(indexPath, JSON.stringify(this.workflows, null, 2), 'utf-8')
+      const tmpPath = `${indexPath}.tmp`
+      await writeFile(tmpPath, JSON.stringify(this.workflows, null, 2), 'utf-8')
+      await rename(tmpPath, indexPath)
     })
     return this.writeQueue
   }
