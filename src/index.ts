@@ -9,6 +9,8 @@ export { NullLibrary } from './library/null-library.js'
 export { FileLibrary, tokenize, buildSearchCorpus } from './library/file-library.js'
 export { hybridScore } from './library/scorer.js'
 export type { ScoredEntry } from './library/scorer.js'
+export { clusterWorkflows, rerank } from './library/cluster.js'
+export type { WorkflowCluster } from './library/cluster.js'
 export type { IWorkflowLibrary, WorkflowMatch, StoredWorkflow, FailurePattern, WorkflowMetadataInput, SourceKind, TrustLevel, OutcomeData, OutcomeStats } from './library/types.js'
 
 export { N8nValidator } from './validation/validator.js'

@@ -107,6 +107,7 @@ describe('FileLibrary', () => {
     })
 
     const matches = await lib.search('send slack notification')
+    await lib.drain()
     expect(matches.length).toBeGreaterThanOrEqual(1)
     expect(matches[0]!.workflow.description).toContain('slack')
     expect(matches[0]!.mode).toBeDefined()

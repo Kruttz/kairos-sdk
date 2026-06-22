@@ -14,6 +14,7 @@ import type {
 import { generateUUID } from '../utils/uuid.js'
 import { scoreToMode } from '../utils/thresholds.js'
 import { hybridScore } from './scorer.js'
+import { clusterWorkflows, rerank } from './cluster.js'
 
 export function tokenize(text: string): string[] {
   return text
@@ -99,9 +100,11 @@ export class FileLibrary implements IWorkflowLibrary {
     const scored = hybridScore(queryTokens, description, searchable, docTokenArrays, idf)
       .filter((m) => m.score > 0)
       .sort((a, b) => b.score - a.score)
-      .slice(0, limit)
 
-    const results = scored.map((m) => {
+    const clusters = clusterWorkflows(searchable)
+    const reranked = rerank(scored, clusters).slice(0, limit)
+
+    const results = reranked.map((m) => {
       return { workflow: m.workflow, score: m.score, mode: scoreToMode(m.score) }
     })
 
