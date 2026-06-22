@@ -112,9 +112,13 @@ export class NodeRegistry {
     return this.byType.get(type)?.isTrigger === true
   }
 
+  isKnown(type: string): boolean {
+    return this.byType.has(type)
+  }
+
   isVersionSafe(type: string, version: number): boolean {
     const def = this.byType.get(type)
-    if (!def) return true // unknown nodes: pass through, don't block
+    if (!def) return true
     return def.safeTypeVersions.includes(version)
   }
 

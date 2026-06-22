@@ -30,6 +30,11 @@ export class N8nApiClient {
     const url = `${this.baseUrl.replace(/\/$/, '')}/api/v1${path}`
     this.logger.debug(`n8n ${method} ${path}`)
 
+    const isSafe = method === 'GET'
+    if (!isSafe) {
+      return this.singleRequest<T>(url, method, path, body)
+    }
+
     return withRetry(
       () => this.singleRequest<T>(url, method, path, body),
       RETRY_ATTEMPTS,

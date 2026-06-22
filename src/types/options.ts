@@ -3,8 +3,8 @@ import type { IWorkflowLibrary } from '../library/types.js'
 
 export interface ClientOptions {
   anthropicApiKey: string
-  n8nBaseUrl: string
-  n8nApiKey: string
+  n8nBaseUrl?: string
+  n8nApiKey?: string
   model?: string
   logger?: ILogger
   library?: IWorkflowLibrary

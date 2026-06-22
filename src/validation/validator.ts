@@ -51,6 +51,7 @@ export class N8nValidator {
     this.checkRule20(workflow, issues)
     this.checkRule21(workflow, issues)
     this.checkRule22(workflow, issues)
+    this.checkRule23(workflow, issues)
 
     const errors = issues.filter((i) => i.severity === 'error')
     return { valid: errors.length === 0, issues }
@@ -402,6 +403,24 @@ export class N8nValidator {
             node.id,
           )
         }
+      }
+    }
+  }
+
+  // Rule 23 (WARN): unknown node types not in registry
+  private checkRule23(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    for (const node of w.nodes) {
+      if (typeof node.type !== 'string') continue
+      if (node.type.includes('stickyNote')) continue
+      if (!NODE_TYPE_PATTERN.test(node.type)) continue
+      if (!this.registry.isKnown(node.type)) {
+        this.warn(
+          issues,
+          23,
+          `Node "${node.name}" uses unknown type "${node.type}" — it may not exist in n8n`,
+          node.id,
+        )
       }
     }
   }

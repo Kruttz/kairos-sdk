@@ -66,15 +66,22 @@ function parseArgs(argv: string[]): { command: string; positional: string[]; fla
   return { command, positional, flags }
 }
 
-function createClient(): Kairos {
-  const telemetryEnv = process.env['KAIROS_TELEMETRY']
-  let telemetry: boolean | string | undefined
-  if (telemetryEnv === 'true') {
-    telemetry = true
-  } else if (telemetryEnv && telemetryEnv !== 'false') {
-    telemetry = telemetryEnv
-  }
+const CLI_LOGGER = {
+  debug: () => {},
+  info: (msg: string, meta?: Record<string, unknown>) => console.error(meta ? `${msg} ${JSON.stringify(meta)}` : msg),
+  warn: (msg: string, meta?: Record<string, unknown>) => console.error(meta ? `[warn] ${msg} ${JSON.stringify(meta)}` : `[warn] ${msg}`),
+  error: (msg: string, meta?: Record<string, unknown>) => console.error(meta ? `[error] ${msg} ${JSON.stringify(meta)}` : `[error] ${msg}`),
+}
 
+function getTelemetryOption(): boolean | string | undefined {
+  const telemetryEnv = process.env['KAIROS_TELEMETRY']
+  if (telemetryEnv === 'true') return true
+  if (telemetryEnv && telemetryEnv !== 'false') return telemetryEnv
+  return undefined
+}
+
+function createClient(): Kairos {
+  const telemetry = getTelemetryOption()
   return new Kairos({
     anthropicApiKey: getEnvOrExit('ANTHROPIC_API_KEY'),
     n8nBaseUrl: getEnvOrExit('N8N_BASE_URL'),
@@ -82,12 +89,20 @@ function createClient(): Kairos {
     ...(process.env['KAIROS_MODEL'] ? { model: process.env['KAIROS_MODEL'] } : {}),
     ...(telemetry !== undefined ? { telemetry } : {}),
     library: new FileLibrary(),
-    logger: {
-      debug: () => {},
-      info: (msg, meta) => console.error(meta ? `${msg} ${JSON.stringify(meta)}` : msg),
-      warn: (msg, meta) => console.error(meta ? `[warn] ${msg} ${JSON.stringify(meta)}` : `[warn] ${msg}`),
-      error: (msg, meta) => console.error(meta ? `[error] ${msg} ${JSON.stringify(meta)}` : `[error] ${msg}`),
-    },
+    logger: CLI_LOGGER,
+  })
+}
+
+function createDryRunClient(): Kairos {
+  const telemetry = getTelemetryOption()
+  return new Kairos({
+    anthropicApiKey: getEnvOrExit('ANTHROPIC_API_KEY'),
+    ...(process.env['N8N_BASE_URL'] ? { n8nBaseUrl: process.env['N8N_BASE_URL'] } : {}),
+    ...(process.env['N8N_API_KEY'] ? { n8nApiKey: process.env['N8N_API_KEY'] } : {}),
+    ...(process.env['KAIROS_MODEL'] ? { model: process.env['KAIROS_MODEL'] } : {}),
+    ...(telemetry !== undefined ? { telemetry } : {}),
+    library: new FileLibrary(),
+    logger: CLI_LOGGER,
   })
 }
 
@@ -98,13 +113,14 @@ async function handleBuild(positional: string[], flags: Record<string, string | 
     process.exit(1)
   }
 
-  const kairos = createClient()
+  const isDryRun = flags['dry-run'] === true
+  const kairos = isDryRun ? createDryRunClient() : createClient()
   const start = Date.now()
 
   console.error(`Generating workflow...`)
 
   const result = await kairos.build(description, {
-    dryRun: flags['dry-run'] === true,
+    dryRun: isDryRun,
     ...(typeof flags['name'] === 'string' ? { name: flags['name'] } : {}),
     activate: flags['activate'] === true,
   })

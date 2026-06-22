@@ -2,7 +2,7 @@
 
 **Turn plain English into deployed n8n workflows — validated, corrected, and deployed in one call.**
 
-Kairos is a TypeScript SDK that takes a natural-language description of an automation, calls Claude to generate n8n workflow JSON, runs it through a **22-rule structural validator** with an automatic correction loop (up to 3 attempts), and deploys the result to your n8n instance via REST API. A local workflow library with **hybrid retrieval** (TF-IDF + node fingerprinting + outcome history + cluster reranking) and telemetry-based feedback inject past failure patterns into future generations. With a seeded template library, Kairos achieves **100% first-try validation pass rate** across 20 benchmark prompts.
+Kairos is a TypeScript SDK that takes a natural-language description of an automation, calls Claude to generate n8n workflow JSON, runs it through a **23-rule structural validator** with an automatic correction loop (up to 3 attempts), and deploys the result to your n8n instance via REST API. A local workflow library with **hybrid retrieval** (TF-IDF + node fingerprinting + outcome history + cluster reranking) and telemetry-based feedback inject past failure patterns into future generations. With a seeded template library, Kairos achieves **100% first-try validation pass rate** across 20 benchmark prompts.
 
 ```ts
 import { Kairos } from '@kairos-sdk/core'
@@ -74,7 +74,7 @@ console.log(deployed.workflowId) // now live in n8n
 
 ## Benchmark Results
 
-Tested against 20 workflow prompts of varying complexity (simple triggers, multi-step conditional logic, AI agents with memory). Results measure **structural validation pass rate** — whether the generated workflow passes all 22 validator rules, not end-to-end execution correctness.
+Tested against 20 workflow prompts of varying complexity (simple triggers, multi-step conditional logic, AI agents with memory). Results measure **structural validation pass rate** — whether the generated workflow passes all 23 validator rules, not end-to-end execution correctness.
 
 ### Before vs After: Template-Seeded Library
 
@@ -133,6 +133,7 @@ The 22-rule validator is the core of what makes Kairos reliable. In baseline tes
 | 20 | warn | No connection cycles (exempts splitInBatches loops) |
 | 21 | warn | Webhook with responseMode="responseNode" has respondToWebhook |
 | 22 | warn | Required parameters present for known node types |
+| 23 | warn | Node type is recognized in the registry (unknown types may not exist in n8n) |
 
 Errors block deployment. Warnings are recorded and fed back into the prompt for future builds.
 
@@ -194,8 +195,8 @@ const workflows = await kairos.list()
 // Get a specific workflow
 const workflow = await kairos.get(workflowId)
 
-// Update a workflow from a new description
-const updated = await kairos.update(workflowId, 'new description')
+// Replace a workflow with a fresh generation from a new description
+const updated = await kairos.replace(workflowId, 'new description')
 
 // Activate / deactivate
 await kairos.activate(workflowId)
@@ -304,6 +305,8 @@ export ANTHROPIC_API_KEY=sk-ant-...
 export N8N_BASE_URL=https://your-instance.app.n8n.cloud
 export N8N_API_KEY=your-n8n-key
 ```
+
+For dry-run mode, only `ANTHROPIC_API_KEY` is required — no n8n setup needed.
 
 ---
 

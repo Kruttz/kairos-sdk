@@ -377,4 +377,37 @@ describe('N8nValidator', () => {
     const result = validator.validate(w)
     expect(result.issues.filter((i) => i.rule === 22).length).toBeGreaterThanOrEqual(1)
   })
+
+  // Rule 23 (warn): unknown node types
+  it('rule 23: warns on unknown node types not in registry', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'dddddddd-dddd-4ddd-dddd-dddddddddddd',
+      name: 'Fake Node',
+      type: 'n8n-nodes-base.totallyFakeNode',
+      typeVersion: 1,
+      position: [450, 300],
+      parameters: {},
+    })
+    const result = validator.validate(w)
+    const rule23 = result.issues.filter((i) => i.rule === 23)
+    expect(rule23.length).toBe(1)
+    expect(rule23[0]!.severity).toBe('warn')
+    expect(rule23[0]!.message).toContain('totallyFakeNode')
+  })
+
+  it('rule 23: does not warn on known node types', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee',
+      name: 'Slack',
+      type: 'n8n-nodes-base.slack',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: {},
+    })
+    const result = validator.validate(w)
+    const rule23 = result.issues.filter((i) => i.rule === 23)
+    expect(rule23.length).toBe(0)
+  })
 })

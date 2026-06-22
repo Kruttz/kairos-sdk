@@ -20,7 +20,7 @@ import { GuardError } from './errors/guard-error.js'
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 
 export class Kairos {
-  private readonly provider: N8nProvider
+  private readonly provider: N8nProvider | null
   private readonly designer: WorkflowDesigner
   private readonly validator: N8nValidator
   private readonly library: IWorkflowLibrary
@@ -34,17 +34,20 @@ export class Kairos {
     const logger = options.logger ?? nullLogger
     this.model = options.model ?? DEFAULT_MODEL
 
-    try {
-      new URL(options.n8nBaseUrl)
-    } catch {
-      throw new GuardError(`Invalid n8nBaseUrl: "${options.n8nBaseUrl}" — must be a valid URL`)
+    if (options.n8nBaseUrl && options.n8nApiKey) {
+      try {
+        new URL(options.n8nBaseUrl)
+      } catch {
+        throw new GuardError(`Invalid n8nBaseUrl: "${options.n8nBaseUrl}" — must be a valid URL`)
+      }
+      const apiClient = new N8nApiClient(options.n8nBaseUrl, options.n8nApiKey, logger)
+      const stripper = new N8nFieldStripper()
+      this.provider = new N8nProvider(apiClient, stripper)
+    } else {
+      this.provider = null
     }
 
     const anthropic = new Anthropic({ apiKey: options.anthropicApiKey })
-    const apiClient = new N8nApiClient(options.n8nBaseUrl, options.n8nApiKey, logger)
-    const stripper = new N8nFieldStripper()
-
-    this.provider = new N8nProvider(apiClient, stripper)
     this.designer = new WorkflowDesigner(anthropic, this.model, logger)
     this.validator = new N8nValidator()
     this.library = options.library ?? new NullLibrary()
@@ -60,6 +63,13 @@ export class Kairos {
       this.telemetry = null
       this.telemetryReader = null
     }
+  }
+
+  private requireProvider(): N8nProvider {
+    if (!this.provider) {
+      throw new GuardError('n8nBaseUrl and n8nApiKey are required for this operation — set them in the Kairos constructor, or use { dryRun: true } for generation-only mode')
+    }
+    return this.provider
   }
 
   private validateDescription(description: string): void {
@@ -140,11 +150,12 @@ export class Kairos {
       }
     }
 
-    const deployed = await this.provider.deploy(workflow)
+    const provider = this.requireProvider()
+    const deployed = await provider.deploy(workflow)
     this.recordDeploy()
 
     if (options?.activate) {
-      await this.provider.activate(deployed.workflowId)
+      await provider.activate(deployed.workflowId)
     }
 
     const totalTokensInput = designResult.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0)
@@ -174,7 +185,7 @@ export class Kairos {
     }
   }
 
-  async update(id: string, description: string): Promise<BuildResult> {
+  async replace(id: string, description: string): Promise<BuildResult> {
     this.validateDescription(description)
     this.logger.info('Kairos.update', { id, description })
     const buildStart = Date.now()
@@ -193,7 +204,8 @@ export class Kairos {
 
     await this.emitAttemptTelemetry(description, designResult)
 
-    const deployed = await this.provider.update(id, designResult.workflow)
+    const provider = this.requireProvider()
+    const deployed = await provider.update(id, designResult.workflow)
 
     this.saveToLibrary(designResult.workflow, description, designResult, matches)
     this.recordDeploy()
@@ -325,46 +337,46 @@ export class Kairos {
   }
 
   async get(id: string): Promise<N8nWorkflow> {
-    return this.provider.get(id)
+    return this.requireProvider().get(id)
   }
 
   async list(): Promise<WorkflowListItem[]> {
-    return this.provider.list()
+    return this.requireProvider().list()
   }
 
   async activate(id: string): Promise<void> {
-    await this.provider.activate(id)
+    await this.requireProvider().activate(id)
   }
 
   async deactivate(id: string): Promise<void> {
-    await this.provider.deactivate(id)
+    await this.requireProvider().deactivate(id)
   }
 
   async delete(id: string, options: DeleteOptions): Promise<void> {
-    await this.provider.delete(id, options)
+    await this.requireProvider().delete(id, options)
   }
 
   async executions(workflowId?: string, filter?: ExecutionFilter): Promise<ExecutionSummary[]> {
-    return this.provider.executions(workflowId, filter)
+    return this.requireProvider().executions(workflowId, filter)
   }
 
   async execution(id: string): Promise<ExecutionDetail> {
-    return this.provider.execution(id)
+    return this.requireProvider().execution(id)
   }
 
   async listTags(): Promise<Tag[]> {
-    return this.provider.listTags()
+    return this.requireProvider().listTags()
   }
 
   async createTag(name: string): Promise<Tag> {
-    return this.provider.createTag(name)
+    return this.requireProvider().createTag(name)
   }
 
   async tag(workflowId: string, tagIds: string[]): Promise<void> {
-    await this.provider.tag(workflowId, tagIds)
+    await this.requireProvider().tag(workflowId, tagIds)
   }
 
   async untag(workflowId: string, tagIds: string[]): Promise<void> {
-    await this.provider.untag(workflowId, tagIds)
+    await this.requireProvider().untag(workflowId, tagIds)
   }
 }
