@@ -7,6 +7,7 @@ export interface CredentialRequirement {
 export interface BuildResult {
   workflowId: string | null
   name: string
+  workflow: import('../types/workflow.js').N8nWorkflow
   credentialsNeeded: CredentialRequirement[]
   activationRequired: boolean
   generationAttempts: number

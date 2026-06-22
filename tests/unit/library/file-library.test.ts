@@ -10,6 +10,7 @@ function makeWorkflow(name: string): N8nWorkflow {
     name,
     nodes: [
       {
+        id: '00000000-0000-4000-8000-000000000001',
         parameters: {},
         name: 'Start',
         type: 'n8n-nodes-base.manualTrigger',
@@ -76,7 +77,7 @@ describe('FileLibrary', () => {
       generationAttempts: 2,
       topMatchScore: 0.85,
       sourceWorkflowIds: ['abc', 'def'],
-      credentialsNeeded: [{ name: 'Slack', nodeType: 'n8n-nodes-base.slack' }],
+      credentialsNeeded: [{ service: 'Slack', credentialType: 'slackOAuth2Api', description: 'Slack OAuth2 credentials' }],
     })
     const stored = await lib.get(id)
     expect(stored!.generationMode).toBe('reference')
@@ -116,7 +117,9 @@ describe('FileLibrary', () => {
     const saves = Array.from({ length: 5 }, (_, i) =>
       lib.save(makeWorkflow(`Concurrent ${i}`), { description: `workflow ${i}` }),
     )
-    await Promise.all(saves)
+    const ids = await Promise.all(saves)
+
+    expect(new Set(ids).size).toBe(5)
 
     const all = await lib.list()
     expect(all).toHaveLength(5)

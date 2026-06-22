@@ -79,15 +79,15 @@ function createClient(): Kairos {
     library: new FileLibrary(),
     logger: {
       debug: () => {},
-      info: (msg) => console.error(`${msg}`),
-      warn: (msg) => console.error(`[warn] ${msg}`),
-      error: (msg) => console.error(`[error] ${msg}`),
+      info: (msg, meta) => console.error(meta ? `${msg} ${JSON.stringify(meta)}` : msg),
+      warn: (msg, meta) => console.error(meta ? `[warn] ${msg} ${JSON.stringify(meta)}` : `[warn] ${msg}`),
+      error: (msg, meta) => console.error(meta ? `[error] ${msg} ${JSON.stringify(meta)}` : `[error] ${msg}`),
     },
   })
 }
 
 async function handleBuild(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
-  const description = positional[0]
+  const description = positional.join(' ')
   if (!description) {
     console.error('Usage: kairos build <description> [--dry-run] [--name <name>] [--activate]')
     process.exit(1)
@@ -104,6 +104,8 @@ async function handleBuild(positional: string[], flags: Record<string, string | 
     activate: flags['activate'] === true,
   })
 
+  await kairos.drain()
+
   const elapsed = ((Date.now() - start) / 1000).toFixed(1)
 
   console.error(`Done in ${elapsed}s (${result.generationAttempts} attempt${result.generationAttempts > 1 ? 's' : ''})`)
@@ -116,12 +118,14 @@ async function handleBuild(positional: string[], flags: Record<string, string | 
     activationRequired: result.activationRequired,
     dryRun: result.dryRun,
     credentialsNeeded: result.credentialsNeeded,
+    ...(result.dryRun ? { workflow: result.workflow } : {}),
   }, null, 2))
 }
 
 async function handleList(): Promise<void> {
   const kairos = createClient()
   const workflows = await kairos.list()
+  await kairos.drain()
 
   if (workflows.length === 0) {
     console.log('No workflows found.')
@@ -144,6 +148,7 @@ async function handleGet(positional: string[]): Promise<void> {
 
   const kairos = createClient()
   const workflow = await kairos.get(id)
+  await kairos.drain()
   console.log(JSON.stringify(workflow, null, 2))
 }
 
@@ -156,6 +161,7 @@ async function handleActivate(positional: string[]): Promise<void> {
 
   const kairos = createClient()
   await kairos.activate(id)
+  await kairos.drain()
   console.log(`Activated workflow ${id}`)
 }
 
@@ -168,6 +174,7 @@ async function handleDeactivate(positional: string[]): Promise<void> {
 
   const kairos = createClient()
   await kairos.deactivate(id)
+  await kairos.drain()
   console.log(`Deactivated workflow ${id}`)
 }
 
@@ -185,6 +192,7 @@ async function handleDelete(positional: string[], flags: Record<string, string |
 
   const kairos = createClient()
   await kairos.delete(id, { confirm: true })
+  await kairos.drain()
   console.log(`Deleted workflow ${id}`)
 }
 
@@ -222,17 +230,16 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+main().catch((err: unknown) => {
   if (err instanceof Error) {
     console.error(`Error: ${err.message}`)
-    if ('issues' in err) {
-      const issues = (err as { issues: Array<{ rule: number; message: string }> }).issues
-      for (const issue of issues) {
+    if ('issues' in err && Array.isArray((err as Record<string, unknown>).issues)) {
+      for (const issue of (err as Record<string, unknown>).issues as Array<{ rule: number; message: string }>) {
         console.error(`  [Rule ${issue.rule}] ${issue.message}`)
       }
     }
   } else {
-    console.error(err)
+    console.error(String(err))
   }
   process.exit(1)
 })

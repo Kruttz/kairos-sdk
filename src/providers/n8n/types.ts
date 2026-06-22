@@ -65,6 +65,7 @@ export const FORBIDDEN_ON_CREATE = [
   'pinData',
   'triggerCount',
   'shared',
+  'staticData',
 ] as const
 
 export const FORBIDDEN_ON_UPDATE = FORBIDDEN_ON_CREATE.filter((f) => f !== 'id')

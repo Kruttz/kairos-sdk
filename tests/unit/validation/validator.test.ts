@@ -279,8 +279,8 @@ describe('N8nValidator', () => {
       ai_languageModel: [[{ node: 'OpenAI Model', type: 'ai_languageModel', index: 0 }]],
     }
     const result = validator.validate(w)
-    expect(result.valid).toBe(true) // only a warning, not an error
-    expect(result.issues.some((i) => i.rule === 18 && i.severity === 'warn')).toBe(true)
+    expect(result.valid).toBe(false)
+    expect(result.issues.some((i) => i.rule === 18 && i.severity === 'error')).toBe(true)
   })
 
   // Rule 19 (warn)
@@ -299,5 +299,82 @@ describe('N8nValidator', () => {
     const result = validator.validate(w)
     const rule19 = result.issues.filter((i) => i.rule === 19)
     expect(rule19).toHaveLength(0)
+  })
+
+  // Rule 20 (warn): cycle detection
+  it('rule 20: warns on connection cycle', () => {
+    const w = baseWorkflow()
+    w.nodes.push(
+      { id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Step A', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [470, 300], parameters: {} },
+      { id: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb', name: 'Step B', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [690, 300], parameters: {} },
+    )
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Step A', type: 'main', index: 0 }]] }
+    w.connections['Step A'] = { main: [[{ node: 'Step B', type: 'main', index: 0 }]] }
+    w.connections['Step B'] = { main: [[{ node: 'Step A', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 20 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 20: passes on acyclic workflow', () => {
+    const w = baseWorkflow()
+    w.nodes.push(
+      { id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Step A', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [470, 300], parameters: {} },
+    )
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Step A', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.filter((i) => i.rule === 20)).toHaveLength(0)
+  })
+
+  // Rule 21 (warn): webhook + respondToWebhook
+  it('rule 21: warns when webhook uses responseNode but no respondToWebhook exists', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = {
+      id: 'cccccccc-cccc-4ccc-cccc-cccccccccccc',
+      name: 'Webhook',
+      type: 'n8n-nodes-base.webhook',
+      typeVersion: 2,
+      position: [250, 300],
+      parameters: { httpMethod: 'POST', path: '/test', responseMode: 'responseNode' },
+    }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 21)).toBe(true)
+  })
+
+  it('rule 21: passes when respondToWebhook exists', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = {
+      id: 'cccccccc-cccc-4ccc-cccc-cccccccccccc',
+      name: 'Webhook',
+      type: 'n8n-nodes-base.webhook',
+      typeVersion: 2,
+      position: [250, 300],
+      parameters: { httpMethod: 'POST', path: '/test', responseMode: 'responseNode' },
+    }
+    w.nodes.push({
+      id: 'dddddddd-dddd-4ddd-dddd-dddddddddddd',
+      name: 'Respond to Webhook',
+      type: 'n8n-nodes-base.respondToWebhook',
+      typeVersion: 1.1,
+      position: [470, 300],
+      parameters: {},
+    })
+    w.connections['Webhook'] = { main: [[{ node: 'Respond to Webhook', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.filter((i) => i.rule === 21)).toHaveLength(0)
+  })
+
+  // Rule 22 (warn): required params
+  it('rule 22: warns when webhook missing required params', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = {
+      id: 'cccccccc-cccc-4ccc-cccc-cccccccccccc',
+      name: 'Webhook',
+      type: 'n8n-nodes-base.webhook',
+      typeVersion: 2,
+      position: [250, 300],
+      parameters: {},
+    }
+    const result = validator.validate(w)
+    expect(result.issues.filter((i) => i.rule === 22).length).toBeGreaterThanOrEqual(1)
   })
 })

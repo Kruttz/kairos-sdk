@@ -52,7 +52,7 @@ const GENERATE_WORKFLOW_TOOL: Anthropic.Tool = {
         description: 'Set this if the request cannot be fulfilled — explain why',
       },
     },
-    required: ['workflow'],
+    required: [],
   },
 }
 
@@ -76,25 +76,25 @@ export class WorkflowDesigner {
   }
 
   async design(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = []): Promise<DesignResult> {
-    const allIssues: ValidationIssue[] = []
     const attemptMetadata: AttemptMetadata[] = []
+    let lastErrors: ValidationIssue[] = []
     let attempts = 0
+    const built = this.promptBuilder.build(request, matches, globalFailureRates)
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       attempts = attempt
       const temperature = attempt === MAX_ATTEMPTS ? FINAL_TEMPERATURE : BASE_TEMPERATURE
-      const built = this.promptBuilder.build(request, matches, globalFailureRates)
 
       let userMessage: string
       if (attempt === 1) {
         userMessage = built.userMessage
         this.logger.debug('WorkflowDesigner: attempt 1', { description: request.description })
       } else {
-        const issueLines = allIssues.map(
+        const issueLines = lastErrors.map(
           (i) => `- [Rule ${i.rule}] ${i.message}${i.nodeId ? ` (node: ${i.nodeId})` : ''}`,
         )
         userMessage = this.promptBuilder.buildCorrectionMessage(request, matches, issueLines, attempt - 1)
-        this.logger.debug(`WorkflowDesigner: correction attempt ${attempt}`, { issueCount: allIssues.length })
+        this.logger.debug(`WorkflowDesigner: correction attempt ${attempt}`, { issueCount: lastErrors.length })
       }
 
       const start = Date.now()
@@ -116,23 +116,23 @@ export class WorkflowDesigner {
         tokensInput: message.usage.input_tokens,
         tokensOutput: message.usage.output_tokens,
         validationPassed: validation.valid,
-        issues: errors,
+        issues: validation.issues,
       })
 
       if (validation.valid) {
         return { workflow: parsed.workflow, credentialsNeeded: parsed.credentialsNeeded, attempts, attemptMetadata }
       }
 
-      allIssues.push(...errors)
+      lastErrors = errors
       this.logger.warn(`WorkflowDesigner: validation failed on attempt ${attempt}`, {
-        newErrors: errors.length,
-        totalErrors: allIssues.length,
+        errorCount: errors.length,
       })
     }
 
+    const finalIssues = attemptMetadata.at(-1)?.issues ?? lastErrors
     throw new ValidationError(
-      `Workflow failed validation after ${MAX_ATTEMPTS} attempts (${allIssues.length} total errors)`,
-      allIssues,
+      `Workflow failed validation after ${MAX_ATTEMPTS} attempts`,
+      finalIssues,
     )
   }
 
@@ -141,19 +141,26 @@ export class WorkflowDesigner {
     userMessage: string,
     temperature: number,
   ): Promise<Anthropic.Message> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 120_000)
     try {
-      return await this.anthropic.messages.create({
-        model: this.model,
-        max_tokens: 8192,
-        temperature,
-        system: system as Anthropic.TextBlockParam[],
-        messages: [{ role: 'user', content: userMessage }],
-        tools: [GENERATE_WORKFLOW_TOOL],
-        tool_choice: { type: 'tool', name: 'generate_workflow' },
-      })
+      return await this.anthropic.messages.create(
+        {
+          model: this.model,
+          max_tokens: 8192,
+          temperature,
+          system: system.map((b) => ({ type: b.type, text: b.text, ...(b.cache_control ? { cache_control: b.cache_control } : {}) })),
+          messages: [{ role: 'user', content: userMessage }],
+          tools: [GENERATE_WORKFLOW_TOOL],
+          tool_choice: { type: 'tool', name: 'generate_workflow' },
+        },
+        { signal: controller.signal },
+      )
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)
       throw new GenerationError(`Anthropic API call failed: ${detail}`, err)
+    } finally {
+      clearTimeout(timer)
     }
   }
 

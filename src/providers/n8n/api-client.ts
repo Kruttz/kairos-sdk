@@ -4,6 +4,7 @@ import type { ExecutionFilter } from '../../types/options.js'
 import type { ILogger } from '../../utils/logger.js'
 import { ApiError } from '../../errors/api-error.js'
 import { ProviderError } from '../../errors/provider-error.js'
+import { withRetry, fetchWithTimeout } from '../../utils/retry.js'
 import type {
   N8nWorkflowResponse,
   N8nWorkflowListResponse,
@@ -14,6 +15,9 @@ import type {
 } from './types.js'
 
 const EXECUTION_LIMIT_CAP = 100
+const REQUEST_TIMEOUT_MS = 30_000
+const RETRY_ATTEMPTS = 3
+const RETRY_DELAY_MS = 1000
 
 export class N8nApiClient {
   constructor(
@@ -26,9 +30,18 @@ export class N8nApiClient {
     const url = `${this.baseUrl.replace(/\/$/, '')}/api/v1${path}`
     this.logger.debug(`n8n ${method} ${path}`)
 
+    return withRetry(
+      () => this.singleRequest<T>(url, method, path, body),
+      RETRY_ATTEMPTS,
+      RETRY_DELAY_MS,
+      (err) => err instanceof ProviderError || (err instanceof ApiError && err.statusCode === 429),
+    )
+  }
+
+  private async singleRequest<T>(url: string, method: string, path: string, body?: unknown): Promise<T> {
     let response: Response
     try {
-      response = await fetch(url, {
+      response = await fetchWithTimeout(url, {
         method,
         headers: {
           'X-N8N-API-KEY': this.apiKey,
@@ -36,7 +49,7 @@ export class N8nApiClient {
           Accept: 'application/json',
         },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      })
+      }, REQUEST_TIMEOUT_MS)
     } catch (err) {
       throw new ProviderError(`Network error calling n8n API: ${path}`, err)
     }
@@ -76,15 +89,26 @@ export class N8nApiClient {
   }
 
   async listWorkflows(): Promise<WorkflowListItem[]> {
-    const response = await this.request<N8nWorkflowListResponse>('GET', '/workflows?limit=250')
-    return response.data.map((w) => ({
-      id: w.id,
-      name: w.name,
-      active: w.active,
-      createdAt: w.createdAt,
-      updatedAt: w.updatedAt,
-      ...(w.tags !== undefined ? { tags: w.tags } : {}),
-    }))
+    const all: WorkflowListItem[] = []
+    let path = '/workflows?limit=250'
+
+    for (;;) {
+      const response: N8nWorkflowListResponse = await this.request<N8nWorkflowListResponse>('GET', path)
+      for (const w of response.data) {
+        all.push({
+          id: w.id,
+          name: w.name,
+          active: w.active,
+          createdAt: w.createdAt,
+          updatedAt: w.updatedAt,
+          ...(w.tags !== undefined ? { tags: w.tags } : {}),
+        })
+      }
+      if (!response.nextCursor) break
+      path = `/workflows?limit=250&cursor=${response.nextCursor}`
+    }
+
+    return all
   }
 
   async deleteWorkflow(id: string): Promise<void> {
@@ -118,8 +142,19 @@ export class N8nApiClient {
   }
 
   async listTags(): Promise<Tag[]> {
-    const response = await this.request<N8nTagListResponse>('GET', '/tags')
-    return response.data.map((t) => ({ id: t.id, name: t.name }))
+    const all: Tag[] = []
+    let path = '/tags?limit=250'
+
+    for (;;) {
+      const response: N8nTagListResponse = await this.request<N8nTagListResponse>('GET', path)
+      for (const t of response.data) {
+        all.push({ id: t.id, name: t.name })
+      }
+      if (!response.nextCursor) break
+      path = `/tags?limit=250&cursor=${response.nextCursor}`
+    }
+
+    return all
   }
 
   async createTag(name: string): Promise<Tag> {

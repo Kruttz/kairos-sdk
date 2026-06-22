@@ -1,8 +1,8 @@
 # @kairos-sdk/core
 
-**Turn plain English into deployed n8n workflows — and get better at it every time.**
+**Turn plain English into deployed n8n workflows — validated, corrected, and deployed in one call.**
 
-Kairos is a TypeScript SDK that takes a natural-language description of an automation, calls Claude to generate valid n8n workflow JSON, runs it through a 19-rule validator with an automatic correction loop, and deploys it to your n8n instance via REST API — all in a single `build()` call. Every build feeds back into a learning loop: failure patterns are recorded, successful workflows are stored in a local library, and future builds use this history to avoid past mistakes and generate higher-quality workflows.
+Kairos is a TypeScript SDK that takes a natural-language description of an automation, calls Claude to generate n8n workflow JSON, runs it through a **22-rule structural validator** with an automatic correction loop (up to 3 attempts), and deploys the result to your n8n instance via REST API. A local workflow library and telemetry-based feedback loop inject past failure patterns into future generations, so repeated builds avoid known mistakes.
 
 ```ts
 import { Kairos } from '@kairos-sdk/core'
@@ -74,31 +74,66 @@ console.log(deployed.workflowId) // now live in n8n
 
 ## Benchmark Results
 
-Tested against 20 workflow prompts of varying complexity (simple triggers, multi-step conditional logic, AI agents with memory):
+Tested against 20 workflow prompts of varying complexity (simple triggers, multi-step conditional logic, AI agents with memory). Results measure **structural validation pass rate** — whether the generated workflow passes all 22 validator rules, not end-to-end execution correctness.
 
 | Metric | Result |
 |---|---|
-| **Success rate** | **20/20 (100%)** |
+| **Passed structural validation** | **20/20 (100%)** |
 | First-try pass | 11/20 (55%) |
 | Needed correction loop | 9/20 (45%) |
 | Failures | 0 |
 | Avg generation time | 30.6s |
 | Avg attempts per workflow | 1.45 |
 
-Without the validator and correction loop, 45% of generated workflows would have shipped with structural errors. With Kairos, 100% pass validation before deployment.
+Without the validator and correction loop, 45% of generated workflows would have shipped with structural errors. The correction loop catches and fixes these before deployment.
+
+> **Note:** These results confirm that generated workflows are structurally valid and deployable to n8n. They do not verify runtime execution correctness, credential configuration, or whether the workflow output matches user intent.
 
 ---
 
 ## How It Works
 
 1. **Search** — Kairos searches its local workflow library for similar past builds. Matching workflows and their failure patterns are pulled into context.
-2. **Warn** — Known failure patterns (from both library matches and global telemetry rates) are injected into the system prompt so Claude avoids repeating past mistakes.
-3. **Generate** — Your description is sent to Claude with a detailed system prompt and forces a `generate_workflow` tool call, producing structured n8n workflow JSON.
-4. **Validate** — The workflow is checked against 19 rules covering node structure, connection integrity, forbidden fields, trigger presence, AI connection direction, and more.
-5. **Correct** — If validation fails, Kairos automatically sends the issues back to Claude and retries (up to 3 attempts, with tighter temperature on the final try).
+2. **Warn** — Known failure patterns (from library matches and global telemetry rates) are injected into the system prompt so Claude avoids repeating known mistakes.
+3. **Generate** — Your description is sent to Claude with a detailed system prompt, forcing a `generate_workflow` tool call that produces structured n8n workflow JSON.
+4. **Validate** — The workflow is checked against **22 structural rules** covering node IDs, types, versions, names, positions, connections, forbidden fields, trigger presence, AI connection direction, cycle detection, webhook pairing, and required parameters.
+5. **Correct** — If validation fails, the specific rule violations are sent back to Claude for correction (up to 3 attempts, with tighter temperature on the final try).
 6. **Strip** — Forbidden server-assigned fields (`id`, `createdAt`, `updatedAt`, etc.) are stripped before deployment.
 7. **Deploy** — The validated workflow is posted to your n8n instance via REST API.
-8. **Learn** — The workflow, its metadata (generation mode, attempt count, failure patterns, credentials needed), and telemetry events are saved locally. Future builds benefit from this accumulated knowledge.
+8. **Record** — The workflow, its metadata (generation mode, attempt count, failure patterns, credentials needed), and telemetry events are saved locally. Future builds use this history to avoid past mistakes.
+
+---
+
+## Validator Rules
+
+The 22-rule validator is the core of what makes Kairos reliable. Without it, Claude generates structurally invalid workflows ~45% of the time. Each rule targets a specific class of error:
+
+| Rule | Severity | What it checks |
+|------|----------|----------------|
+| 1 | error | Workflow has a non-empty name |
+| 2 | error | At least one node exists |
+| 3 | error | Every node has a non-empty ID |
+| 4 | error | No duplicate node IDs |
+| 5 | error | Every node has a type string |
+| 6 | error | Every node has a valid typeVersion |
+| 7 | error | Every node has a valid [x, y] position |
+| 8 | error | Every node has a non-empty name |
+| 9 | error | Connections is a plain object |
+| 10 | error | Every connection target exists in nodes |
+| 11 | warn | Non-trigger nodes have incoming connections |
+| 12 | error | No forbidden server-assigned fields |
+| 13 | error | Settings is a valid object |
+| 14 | error | At least one trigger node present |
+| 15 | error | Node type strings match expected format |
+| 16 | error | No duplicate node names |
+| 17 | error | Credentials have valid id/name shape |
+| 18 | error | AI connections originate from sub-nodes, not agent roots |
+| 19 | warn | typeVersion is within known safe range |
+| 20 | warn | No connection cycles (exempts splitInBatches loops) |
+| 21 | warn | Webhook with responseMode="responseNode" has respondToWebhook |
+| 22 | warn | Required parameters present for known node types |
+
+Errors block deployment. Warnings are recorded and fed back into the prompt for future builds.
 
 ---
 
@@ -135,6 +170,7 @@ const result = await kairos.build(description, {
 {
   workflowId: string | null  // null on dry run
   name: string
+  workflow: N8nWorkflow       // the full generated workflow JSON — inspect before deploying
   generationAttempts: number  // 1–3
   activationRequired: boolean // true if workflow needs manual activation
   credentialsNeeded: Array<{
@@ -231,10 +267,10 @@ try {
 |---|---|
 | `GenerationError` | Anthropic API call failed |
 | `ResponseParseError` | Claude responded but produced no usable tool call |
-| `ValidationError` | Workflow failed 19-rule validation after max retries |
+| `ValidationError` | Workflow failed 22-rule validation after max retries |
 | `ProviderError` | Network/auth failure talking to n8n |
 | `ApiError` | n8n returned a 4xx or 5xx (carries `.statusCode`) |
-| `GuardError` | `delete()` called without `{ confirm: true }` |
+| `GuardError` | Input validation failed (empty description) or `delete()` called without `{ confirm: true }` |
 
 ---
 
@@ -294,9 +330,9 @@ For CLI usage, set `KAIROS_TELEMETRY=true` in your environment.
 
 ---
 
-## Workflow Library & Learning Loop
+## Workflow Library & Feedback Loop
 
-Kairos includes a file-based workflow library that stores every generation and learns from its mistakes:
+Kairos includes a file-based workflow library that stores every generation and feeds failure patterns back into future builds:
 
 ```ts
 import { Kairos, FileLibrary } from '@kairos-sdk/core'
@@ -318,13 +354,13 @@ const kairos = new Kairos({
 - Source workflow IDs (which library entries influenced this build)
 - Top match score and credentials needed
 
-**How it improves over time:**
-- When you build a new workflow, Kairos searches the library using TF-IDF scoring
+**How retrieval and feedback work:**
+- When you build a new workflow, Kairos searches the library using TF-IDF scoring with deploy-count boosting
 - High-scoring matches (>= 0.92) provide direct structural templates
 - Medium matches (>= 0.72) provide reference examples
 - Failure patterns from matched workflows are injected as warnings into Claude's prompt
 - Global failure rates from telemetry (rules failing in >= 15% of all builds) are also included
-- Result: the first build of a type may take 2-3 attempts, but similar builds afterwards pass on the first try
+- Result: the first build of a type may take 2-3 correction attempts, but similar builds afterwards tend to pass on the first try
 
 The CLI automatically enables the library — no configuration needed.
 

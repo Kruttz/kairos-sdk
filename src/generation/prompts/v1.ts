@@ -16,7 +16,7 @@ id, active, createdAt, updatedAt, versionId, meta, isArchived, activeVersionId, 
     "saveDataErrorExecution": "all",
     "saveDataSuccessExecution": "all",
     "executionTimeout": 3600,
-    "timezone": "America/New_York",
+    "timezone": "UTC",
     "executionOrder": "v1"
   }
 }
@@ -58,8 +58,20 @@ Every AI Agent must have at least one ai_languageModel sub-node connected.
 ### IF node — two output ports (0 = true, 1 = false):
 "IF Check": { "main": [ [{ "node": "True Path", "type": "main", "index": 0 }], [{ "node": "False Path", "type": "main", "index": 0 }] ] }
 
+### SplitInBatches — two output ports (0 = done/finished, 1 = loop body per batch):
+Connect output 0 to the node that runs AFTER all batches complete.
+Connect output 1 to the processing chain for each batch. The last node in the chain loops back to SplitInBatches via main input.
+
+### Webhook + RespondToWebhook pattern:
+When webhook responseMode is "responseNode", you MUST include a respondToWebhook node in the flow.
+"Webhook": { "main": [[{ "node": "Process Data", "type": "main", "index": 0 }]] }
+"Process Data": { "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]] }
+
 ### Triggers have no incoming connections.
 ### Connection keys are NODE NAMES, never node IDs.
+
+### Nested parameters:
+Node parameters like conditions, assignments, and rule intervals MUST include all required nested fields. Do not leave nested objects empty or partially filled.
 
 ---
 
@@ -124,16 +136,16 @@ n8n-nodes-base.redis                  typeVersion: 1       — cred: redis
 n8n-nodes-base.supabase               typeVersion: 1       — cred: supabaseApi
 n8n-nodes-base.awsS3                  typeVersion: 2       — cred: aws
 
-### AI — Root nodes (sit on main data flow):
+### AI — Root nodes (sit on main data flow, receive ai_* connections as TARGETS):
 @n8n/n8n-nodes-langchain.agent        typeVersion: 1.9     — params: promptType, text (if define), options.systemMessage
 @n8n/n8n-nodes-langchain.chainLlm     typeVersion: 1.5
 @n8n/n8n-nodes-langchain.chainRetrievalQa typeVersion: 1.4
-@n8n/n8n-nodes-langchain.openAi       typeVersion: 1.8     — cred: openAiApi
-@n8n/n8n-nodes-langchain.anthropic    typeVersion: 1       — cred: anthropicApi
+@n8n/n8n-nodes-langchain.openAi       typeVersion: 1.8     — cred: openAiApi — standalone node, calls OpenAI directly without sub-nodes
+@n8n/n8n-nodes-langchain.anthropic    typeVersion: 1       — cred: anthropicApi — standalone node, calls Anthropic directly without sub-nodes
 
-### AI — Sub-nodes (sources of ai_* connections):
-@n8n/n8n-nodes-langchain.lmChatOpenAi      typeVersion: 1.7  — cred: openAiApi       — ai_languageModel
-@n8n/n8n-nodes-langchain.lmChatAnthropic   typeVersion: 1.3  — cred: anthropicApi    — ai_languageModel
+### AI — Sub-nodes (sources of ai_* connections, wire INTO root nodes above):
+@n8n/n8n-nodes-langchain.lmChatOpenAi      typeVersion: 1.7  — cred: openAiApi       — ai_languageModel — use with agent/chain, NOT standalone
+@n8n/n8n-nodes-langchain.lmChatAnthropic   typeVersion: 1.3  — cred: anthropicApi    — ai_languageModel — use with agent/chain, NOT standalone
 @n8n/n8n-nodes-langchain.lmChatGoogleGemini typeVersion: 1   — cred: googlePalmApi   — ai_languageModel
 @n8n/n8n-nodes-langchain.memoryBufferWindow typeVersion: 1.3  —                       — ai_memory
 @n8n/n8n-nodes-langchain.toolWorkflow      typeVersion: 2     —                       — ai_tool

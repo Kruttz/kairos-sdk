@@ -79,6 +79,8 @@ export const DEFAULT_REGISTRY: NodeDefinition[] = [
   { type: '@n8n/n8n-nodes-langchain.agent', safeTypeVersions: [1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9], requiredParams: [] },
   { type: '@n8n/n8n-nodes-langchain.chainLlm', safeTypeVersions: [1, 1.1, 1.2, 1.3, 1.4, 1.5], requiredParams: [] },
   { type: '@n8n/n8n-nodes-langchain.chainRetrievalQa', safeTypeVersions: [1, 1.1, 1.2, 1.3, 1.4], requiredParams: [] },
+  { type: '@n8n/n8n-nodes-langchain.openAi', safeTypeVersions: [1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8], requiredParams: [], credentialType: 'openAiApi' },
+  { type: '@n8n/n8n-nodes-langchain.anthropic', safeTypeVersions: [1], requiredParams: [], credentialType: 'anthropicApi' },
   { type: '@n8n/n8n-nodes-langchain.informationExtractor', safeTypeVersions: [1], requiredParams: [] },
   { type: '@n8n/n8n-nodes-langchain.textClassifier', safeTypeVersions: [1], requiredParams: [] },
 
@@ -92,6 +94,7 @@ export const DEFAULT_REGISTRY: NodeDefinition[] = [
   { type: '@n8n/n8n-nodes-langchain.toolWorkflow', safeTypeVersions: [1, 1.1, 1.2, 1.3], requiredParams: [] },
   { type: '@n8n/n8n-nodes-langchain.toolCode', safeTypeVersions: [1, 1.1], requiredParams: [] },
   { type: '@n8n/n8n-nodes-langchain.toolHttpRequest', safeTypeVersions: [1, 1.1], requiredParams: [] },
+  { type: '@n8n/n8n-nodes-langchain.toolCalculator', safeTypeVersions: [1], requiredParams: [] },
 ]
 
 export class NodeRegistry {
@@ -113,5 +116,9 @@ export class NodeRegistry {
     const def = this.byType.get(type)
     if (!def) return true // unknown nodes: pass through, don't block
     return def.safeTypeVersions.includes(version)
+  }
+
+  getRequiredParams(type: string): string[] {
+    return this.byType.get(type)?.requiredParams ?? []
   }
 }

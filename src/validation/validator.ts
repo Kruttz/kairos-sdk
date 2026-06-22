@@ -17,7 +17,7 @@ const AI_CONNECTION_TYPES = [
 
 const TRIGGER_TYPE_PATTERNS = [/trigger/i, /Trigger$/]
 
-const NODE_TYPE_PATTERN = /^(@[a-z0-9-]+\/[a-z0-9-]+\.|n8n-nodes-[a-z0-9-]+\.)[a-zA-Z][a-zA-Z0-9]+$/
+const NODE_TYPE_PATTERN = /^(@[a-z0-9-]+\/[a-z0-9-]+\.|n8n-nodes-[a-z0-9-]+\.)[a-zA-Z][a-zA-Z0-9-]+$/
 
 export class N8nValidator {
   private readonly registry: NodeRegistry
@@ -48,6 +48,9 @@ export class N8nValidator {
     this.checkRule17(workflow, issues)
     this.checkRule18(workflow, issues)
     this.checkRule19(workflow, issues)
+    this.checkRule20(workflow, issues)
+    this.checkRule21(workflow, issues)
+    this.checkRule22(workflow, issues)
 
     const errors = issues.filter((i) => i.severity === 'error')
     return { valid: errors.length === 0, issues }
@@ -203,6 +206,7 @@ export class N8nValidator {
       }
     }
     for (const node of w.nodes) {
+      if (node.type.includes('stickyNote')) continue
       if (!this.isTriggerNode(node) && !reachable.has(node.name)) {
         this.warn(issues, 11, `Node "${node.name}" has no incoming connections and may never execute`, node.id)
       }
@@ -282,7 +286,7 @@ export class N8nValidator {
     }
   }
 
-  // Rule 18 (WARN): AI connections originate from sub-nodes, not the agent/chain root
+  // Rule 18 (ERROR): AI connections must originate from sub-nodes, not the agent/chain root
   private checkRule18(w: N8nWorkflow, issues: ValidationIssue[]): void {
     if (typeof w.connections !== 'object' || w.connections === null) return
     const agentTypes = new Set([
@@ -301,7 +305,7 @@ export class N8nValidator {
       if (typeof outputs !== 'object' || outputs === null) continue
       for (const connType of AI_CONNECTION_TYPES) {
         if (connType in outputs) {
-          this.warn(
+          this.err(
             issues,
             18,
             `Node "${sourceName}" uses AI connection type "${connType}" as a SOURCE — AI sub-nodes should be the source, not the agent/chain root`,
@@ -323,6 +327,105 @@ export class N8nValidator {
           19,
           `Node "${node.name}" uses typeVersion ${node.typeVersion} for type "${node.type}" which is not in the known safe list`,
           node.id,
+        )
+      }
+    }
+  }
+
+  // Rule 20 (WARN): cycle detection — no node should be reachable from itself
+  // Exempts splitInBatches loops which are an intentional n8n pattern
+  private checkRule20(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes) || typeof w.connections !== 'object' || w.connections === null) return
+
+    const splitBatchNodes = new Set(
+      w.nodes.filter((n) => n.type.includes('splitInBatches')).map((n) => n.name),
+    )
+
+    const adj = new Map<string, string[]>()
+    for (const [sourceName, outputs] of Object.entries(w.connections)) {
+      if (typeof outputs !== 'object' || outputs === null) continue
+      const targets: string[] = []
+      for (const portGroup of Object.values(outputs)) {
+        if (!Array.isArray(portGroup)) continue
+        for (const conns of portGroup) {
+          if (!Array.isArray(conns)) continue
+          for (const conn of conns) {
+            const t = conn as { node?: string }
+            if (typeof t?.node === 'string') {
+              if (splitBatchNodes.has(t.node)) continue
+              targets.push(t.node)
+            }
+          }
+        }
+      }
+      adj.set(sourceName, targets)
+    }
+
+    const WHITE = 0, GRAY = 1, BLACK = 2
+    const color = new Map<string, number>()
+    for (const node of w.nodes) color.set(node.name, WHITE)
+
+    const dfs = (name: string): boolean => {
+      color.set(name, GRAY)
+      for (const neighbor of adj.get(name) ?? []) {
+        const c = color.get(neighbor)
+        if (c === GRAY) return true
+        if (c === WHITE && dfs(neighbor)) return true
+      }
+      color.set(name, BLACK)
+      return false
+    }
+
+    for (const node of w.nodes) {
+      if (color.get(node.name) === WHITE && dfs(node.name)) {
+        this.warn(issues, 20, 'Workflow contains a connection cycle — this may cause infinite loops')
+        return
+      }
+    }
+  }
+
+  // Rule 22 (WARN): check requiredParams from registry
+  private checkRule22(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    for (const node of w.nodes) {
+      if (typeof node.type !== 'string') continue
+      const required = this.registry.getRequiredParams(node.type)
+      if (required.length === 0) continue
+      const params = (node.parameters ?? {}) as Record<string, unknown>
+      for (const param of required) {
+        const value = params[param]
+        if (value === undefined || value === null || value === '') {
+          this.warn(
+            issues,
+            22,
+            `Node "${node.name}" (${node.type}) is missing required parameter "${param}"`,
+            node.id,
+          )
+        }
+      }
+    }
+  }
+
+  // Rule 21 (WARN): webhook with responseMode="responseNode" must have respondToWebhook node
+  private checkRule21(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+
+    const webhooksNeedingResponse = w.nodes.filter((n) => {
+      if (!n.type.includes('webhook')) return false
+      const params = n.parameters as Record<string, unknown> | undefined
+      return params?.responseMode === 'responseNode'
+    })
+
+    if (webhooksNeedingResponse.length === 0) return
+
+    const hasRespondNode = w.nodes.some((n) => n.type.includes('respondToWebhook'))
+    if (!hasRespondNode) {
+      for (const wh of webhooksNeedingResponse) {
+        this.warn(
+          issues,
+          21,
+          `Webhook "${wh.name}" uses responseMode "responseNode" but no respondToWebhook node exists in the workflow`,
+          wh.id,
         )
       }
     }

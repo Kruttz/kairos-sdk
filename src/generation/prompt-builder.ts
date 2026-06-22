@@ -22,6 +22,9 @@ const RULE_REMEDIES: Record<number, string> = {
   17: 'Credentials must be an object with non-empty string id and name fields: { id: "placeholder-id", name: "My Credential" }',
   18: 'AI sub-nodes (languageModel, memory, tool) must be the CONNECTION SOURCE pointing TO the agent — not the reverse',
   19: 'Use known safe typeVersion values for each node type',
+  20: 'Remove connection cycles — ensure no node can reach itself through the connection graph',
+  21: 'When using webhook with responseMode "responseNode", include a respondToWebhook node in the flow',
+  22: 'Ensure all required parameters are set for each node type (e.g. webhook needs httpMethod and path)',
 }
 
 export class PromptBuilder {
@@ -82,10 +85,21 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
 
     if (mode === 'direct' && matches[0]) {
       const match = matches[0]
-      blocks.push({
-        type: 'text',
-        text: `## Closely Matched Workflow (score: ${match.score.toFixed(2)}) — adapt this structure:\n\n${JSON.stringify(match.workflow.workflow, null, 2)}`,
-      })
+      const json = JSON.stringify(match.workflow.workflow, null, 2)
+      if (json.length > 30_000) {
+        const nodes = match.workflow.workflow.nodes
+          .map((n) => `  - ${n.name} (${n.type} v${n.typeVersion})`)
+          .join('\n')
+        blocks.push({
+          type: 'text',
+          text: `## Closely Matched Workflow (score: ${match.score.toFixed(2)}) — too large for full JSON, using reference:\nNodes:\n${nodes}`,
+        })
+      } else {
+        blocks.push({
+          type: 'text',
+          text: `## Closely Matched Workflow (score: ${match.score.toFixed(2)}) — adapt this structure:\n\n${json}`,
+        })
+      }
     }
 
     if (mode === 'scratch' && matches.length > 0 && matches[0]!.score >= 0.40) {

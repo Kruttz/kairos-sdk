@@ -29,7 +29,9 @@ export class TelemetryReader {
     const events = await this.readRecentEvents(days)
 
     const buildSessions = new Set(
-      events.filter((e) => e.eventType === 'build_complete').map((e) => e.sessionId),
+      events
+        .filter((e) => e.eventType === 'build_complete' && !(e.data as { dryRun?: boolean }).dryRun)
+        .map((e) => e.sessionId),
     )
     if (buildSessions.size === 0) return []
 
@@ -37,6 +39,7 @@ export class TelemetryReader {
 
     for (const event of events) {
       if (event.eventType !== 'generation_attempt') continue
+      if (!buildSessions.has(event.sessionId)) continue
       const data = event.data as { validationPassed?: boolean; issues?: Array<{ rule: number; message: string }> }
       if (data.validationPassed || !data.issues) continue
 

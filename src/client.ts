@@ -15,6 +15,7 @@ import { TelemetryReader } from './telemetry/reader.js'
 import { nullLogger } from './utils/logger.js'
 import type { ILogger } from './utils/logger.js'
 import { scoreToMode } from './utils/thresholds.js'
+import { GuardError } from './errors/guard-error.js'
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 
@@ -27,11 +28,17 @@ export class Kairos {
   private readonly telemetry: TelemetryCollector | null
   private readonly telemetryReader: TelemetryReader | null
   private readonly model: string
-  private saveQueue: Promise<void> = Promise.resolve()
+  private saveQueue: Promise<string | null> = Promise.resolve(null)
 
   constructor(options: ClientOptions) {
     const logger = options.logger ?? nullLogger
     this.model = options.model ?? DEFAULT_MODEL
+
+    try {
+      new URL(options.n8nBaseUrl)
+    } catch {
+      throw new GuardError(`Invalid n8nBaseUrl: "${options.n8nBaseUrl}" — must be a valid URL`)
+    }
 
     const anthropic = new Anthropic({ apiKey: options.anthropicApiKey })
     const apiClient = new N8nApiClient(options.n8nBaseUrl, options.n8nApiKey, logger)
@@ -55,7 +62,14 @@ export class Kairos {
     }
   }
 
+  private validateDescription(description: string): void {
+    if (!description || description.trim().length === 0) {
+      throw new GuardError('Description is required and must be non-empty')
+    }
+  }
+
   async build(description: string, options?: BuildOptions): Promise<BuildResult> {
+    this.validateDescription(description)
     this.logger.info('Kairos.build', { description, dryRun: options?.dryRun })
     const buildStart = Date.now()
 
@@ -90,19 +104,7 @@ export class Kairos {
       globalFailureRates,
     )
 
-    for (const meta of designResult.attemptMetadata) {
-      await this.telemetry?.emit('generation_attempt', {
-        description,
-        attempt: meta.attempt,
-        temperature: meta.temperature,
-        durationMs: meta.durationMs,
-        tokensInput: meta.tokensInput,
-        tokensOutput: meta.tokensOutput,
-        validationPassed: meta.validationPassed,
-        issueCount: meta.issues.length,
-        issues: meta.issues.map((i) => ({ rule: i.rule, message: i.message })),
-      })
-    }
+    await this.emitAttemptTelemetry(description, designResult)
 
     const workflow = options?.name
       ? { ...designResult.workflow, name: options.name }
@@ -130,6 +132,7 @@ export class Kairos {
       return {
         workflowId: null,
         name: workflow.name,
+        workflow,
         credentialsNeeded: designResult.credentialsNeeded,
         activationRequired: true,
         generationAttempts: designResult.attempts,
@@ -138,6 +141,7 @@ export class Kairos {
     }
 
     const deployed = await this.provider.deploy(workflow)
+    this.recordDeploy()
 
     if (options?.activate) {
       await this.provider.activate(deployed.workflowId)
@@ -162,6 +166,7 @@ export class Kairos {
     return {
       workflowId: deployed.workflowId,
       name: deployed.name,
+      workflow,
       credentialsNeeded: designResult.credentialsNeeded,
       activationRequired: !options?.activate,
       generationAttempts: designResult.attempts,
@@ -170,25 +175,88 @@ export class Kairos {
   }
 
   async update(id: string, description: string): Promise<BuildResult> {
+    this.validateDescription(description)
     this.logger.info('Kairos.update', { id, description })
+    const buildStart = Date.now()
+
+    await this.telemetry?.emit('build_start', {
+      description,
+      model: this.model,
+      dryRun: false,
+    })
 
     await this.library.initialize()
     const matches = await this.library.search(description)
     const globalFailureRates = await this.telemetryReader?.getFailureRates() ?? []
 
     const designResult = await this.designer.design({ description }, matches, globalFailureRates)
+
+    await this.emitAttemptTelemetry(description, designResult)
+
     const deployed = await this.provider.update(id, designResult.workflow)
 
     this.saveToLibrary(designResult.workflow, description, designResult, matches)
+    this.recordDeploy()
+
+    const totalTokensInput = designResult.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0)
+    const totalTokensOutput = designResult.attemptMetadata.reduce((s, m) => s + m.tokensOutput, 0)
+
+    await this.telemetry?.emit('build_complete', {
+      description,
+      success: true,
+      totalAttempts: designResult.attempts,
+      totalDurationMs: Date.now() - buildStart,
+      totalTokensInput,
+      totalTokensOutput,
+      workflowName: deployed.name,
+      workflowId: deployed.workflowId,
+      dryRun: false,
+      credentialsNeeded: designResult.credentialsNeeded.length,
+    })
 
     return {
       workflowId: deployed.workflowId,
       name: deployed.name,
+      workflow: designResult.workflow,
       credentialsNeeded: designResult.credentialsNeeded,
       activationRequired: true,
       generationAttempts: designResult.attempts,
       dryRun: false,
     }
+  }
+
+  async drain(): Promise<void> {
+    await this.saveQueue.catch(() => {})
+  }
+
+  private async emitAttemptTelemetry(description: string, designResult: DesignResult): Promise<void> {
+    for (const meta of designResult.attemptMetadata) {
+      await this.telemetry?.emit('generation_attempt', {
+        description,
+        attempt: meta.attempt,
+        temperature: meta.temperature,
+        durationMs: meta.durationMs,
+        tokensInput: meta.tokensInput,
+        tokensOutput: meta.tokensOutput,
+        validationPassed: meta.validationPassed,
+        issueCount: meta.issues.length,
+        issues: meta.issues.map((i) => ({ rule: i.rule, message: i.message })),
+      })
+    }
+  }
+
+  private recordDeploy(): void {
+    this.saveQueue = this.saveQueue
+      .then(async (savedId) => {
+        if (savedId) {
+          await this.library.recordDeployment(savedId)
+        }
+        return savedId
+      })
+      .catch((err: unknown) => {
+        this.logger.warn('Failed to record deployment (non-fatal)', { err: String(err) })
+        return null
+      })
   }
 
   private saveToLibrary(
@@ -227,9 +295,9 @@ export class Kairos {
 
     this.saveQueue = this.saveQueue
       .then(() => this.library.save(workflow, metadata))
-      .then(() => {})
       .catch((err: unknown) => {
         this.logger.warn('Failed to save workflow to library (non-fatal)', { err: String(err) })
+        return null
       })
   }
 

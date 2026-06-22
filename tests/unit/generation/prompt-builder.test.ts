@@ -9,7 +9,7 @@ function makeMatch(score: number, storedOverrides?: Record<string, unknown>): Wo
       id: 'test-id',
       workflow: {
         name: 'Test',
-        nodes: [{ parameters: {}, name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0] }],
+        nodes: [{ id: '00000000-0000-4000-8000-000000000001', parameters: {}, name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0] }],
         connections: {},
       },
       description: 'test workflow',

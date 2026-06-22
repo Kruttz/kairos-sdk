@@ -45,10 +45,12 @@ function computeTfIdf(queryTokens: string[], docTokens: string[], idf: Map<strin
   return score
 }
 
+const MAX_LIBRARY_SIZE = 500
+
 export class FileLibrary implements IWorkflowLibrary {
   private readonly dir: string
   private workflows: StoredWorkflow[] = []
-  private initialized = false
+  private initPromise: Promise<void> | null = null
   private writeQueue: Promise<void> = Promise.resolve()
 
   constructor(dir?: string) {
@@ -56,17 +58,36 @@ export class FileLibrary implements IWorkflowLibrary {
   }
 
   async initialize(): Promise<void> {
-    if (this.initialized) return
+    if (!this.initPromise) {
+      this.initPromise = this.doInitialize()
+    }
+    return this.initPromise
+  }
+
+  private async doInitialize(): Promise<void> {
     await mkdir(this.dir, { recursive: true })
 
     const indexPath = join(this.dir, 'index.json')
     try {
       const raw = await readFile(indexPath, 'utf-8')
-      this.workflows = JSON.parse(raw) as StoredWorkflow[]
+      const parsed: unknown = JSON.parse(raw)
+      if (!Array.isArray(parsed)) {
+        this.workflows = []
+      } else {
+        this.workflows = parsed.filter(
+          (item): item is StoredWorkflow =>
+            typeof item === 'object' &&
+            item !== null &&
+            typeof (item as Record<string, unknown>).id === 'string' &&
+            typeof (item as Record<string, unknown>).description === 'string' &&
+            typeof (item as Record<string, unknown>).workflow === 'object' &&
+            (item as Record<string, unknown>).workflow !== null &&
+            Array.isArray(((item as Record<string, unknown>).workflow as Record<string, unknown>).nodes),
+        )
+      }
     } catch {
       this.workflows = []
     }
-    this.initialized = true
   }
 
   async search(description: string, options?: SearchOptions): Promise<WorkflowMatch[]> {
@@ -76,30 +97,34 @@ export class FileLibrary implements IWorkflowLibrary {
     const queryTokens = tokenize(description)
     if (queryTokens.length === 0) return []
 
-    const docTokenSets = this.workflows.map((w) => tokenize(buildSearchCorpus(w)))
+    const docTokenArrays = this.workflows.map((w) => tokenize(buildSearchCorpus(w)))
+    const docTokenSets = docTokenArrays.map((tokens) => new Set(tokens))
 
     const docCount = this.workflows.length
     const idf = new Map<string, number>()
     const allTokens = new Set(queryTokens)
     for (const token of allTokens) {
-      const docsWithToken = docTokenSets.filter((d) => d.includes(token)).length
+      const docsWithToken = docTokenSets.filter((d) => d.has(token)).length
       idf.set(token, Math.log((docCount + 1) / (docsWithToken + 1)) + 1)
     }
 
+    const maxPossibleScore = queryTokens.reduce((sum, qt) => sum + (idf.get(qt) ?? 0), 0)
+    const ceiling = maxPossibleScore > 0 ? maxPossibleScore : 1
+
     const scored = this.workflows
       .map((w, i) => {
-        const raw = computeTfIdf(queryTokens, docTokenSets[i]!, idf)
+        const raw = computeTfIdf(queryTokens, docTokenArrays[i]!, idf)
+        const normalized = Math.min(raw / ceiling, 1)
         const deployBoost = 1 + Math.log(w.deployCount + 1) * 0.05
-        return { workflow: w, score: raw * deployBoost }
+        const boosted = Math.min(normalized * deployBoost, 1)
+        return { workflow: w, score: boosted }
       })
       .filter((m) => m.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
 
-    const maxScore = scored[0]?.score ?? 1
     return scored.map((m) => {
-      const normalized = maxScore > 0 ? m.score / maxScore : 0
-      return { workflow: m.workflow, score: normalized, mode: scoreToMode(normalized) }
+      return { workflow: m.workflow, score: m.score, mode: scoreToMode(m.score) }
     })
   }
 
@@ -112,7 +137,7 @@ export class FileLibrary implements IWorkflowLibrary {
       description: metadata.description,
       tags: metadata.tags ?? [],
       platform: metadata.platform ?? 'n8n',
-      deployCount: 1,
+      deployCount: 0,
       createdAt: new Date().toISOString(),
       ...(failurePatterns?.length ? { failurePatterns } : {}),
       ...(metadata.sourceWorkflowIds?.length ? { sourceWorkflowIds: metadata.sourceWorkflowIds } : {}),
@@ -122,6 +147,10 @@ export class FileLibrary implements IWorkflowLibrary {
       ...(metadata.credentialsNeeded?.length ? { credentialsNeeded: metadata.credentialsNeeded } : {}),
     }
     this.workflows.push(stored)
+    if (this.workflows.length > MAX_LIBRARY_SIZE) {
+      this.workflows.sort((a, b) => (b.deployCount ?? 1) - (a.deployCount ?? 1))
+      this.workflows = this.workflows.slice(0, MAX_LIBRARY_SIZE)
+    }
     await this.persist()
     return id
   }
