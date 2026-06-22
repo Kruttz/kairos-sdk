@@ -1,13 +1,13 @@
 {
   "name": "@kairos-sdk/core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "LLM-powered n8n workflow generation and deployment SDK",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "kairos": "./dist/cli.js"
+    "kairos": "dist/cli.js"
   },
   "exports": {
     ".": {
@@ -44,6 +44,14 @@
     "kairos",
     "no-code"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kruttz/kairos-sdk.git"
+  },
+  "homepage": "https://github.com/Kruttz/kairos-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/Kruttz/kairos-sdk/issues"
+  },
   "author": "Jordan Krutman",
   "license": "MIT",
   "peerDependencies": {
