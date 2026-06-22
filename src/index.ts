@@ -6,7 +6,9 @@ export { N8nFieldStripper } from './providers/n8n/stripper.js'
 export type { IProvider } from './providers/types.js'
 
 export { NullLibrary } from './library/null-library.js'
-export { FileLibrary } from './library/file-library.js'
+export { FileLibrary, tokenize, buildSearchCorpus } from './library/file-library.js'
+export { hybridScore } from './library/scorer.js'
+export type { ScoredEntry } from './library/scorer.js'
 export type { IWorkflowLibrary, WorkflowMatch, StoredWorkflow, FailurePattern, WorkflowMetadataInput, SourceKind, TrustLevel, OutcomeData, OutcomeStats } from './library/types.js'
 
 export { N8nValidator } from './validation/validator.js'

@@ -13,8 +13,9 @@ import type {
 } from './types.js'
 import { generateUUID } from '../utils/uuid.js'
 import { scoreToMode } from '../utils/thresholds.js'
+import { hybridScore } from './scorer.js'
 
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
@@ -22,28 +23,13 @@ function tokenize(text: string): string[] {
     .filter((t) => t.length > 2)
 }
 
-function buildSearchCorpus(w: StoredWorkflow): string {
+export function buildSearchCorpus(w: StoredWorkflow): string {
   const nodeTokens = w.workflow.nodes.map((n) => {
     const bare = n.type.split('.').pop() ?? ''
     const spaced = bare.replace(/([A-Z])/g, ' $1').trim().toLowerCase()
     return `${bare} ${spaced}`
   })
   return `${w.description} ${w.workflow.name} ${w.tags.join(' ')} ${nodeTokens.join(' ')}`
-}
-
-function computeTfIdf(queryTokens: string[], docTokens: string[], idf: Map<string, number>): number {
-  if (docTokens.length === 0) return 0
-  let score = 0
-  const docFreq = new Map<string, number>()
-  for (const t of docTokens) {
-    docFreq.set(t, (docFreq.get(t) ?? 0) + 1)
-  }
-  for (const qt of queryTokens) {
-    const tf = (docFreq.get(qt) ?? 0) / docTokens.length
-    const idfVal = idf.get(qt) ?? 0
-    score += tf * idfVal
-  }
-  return score
 }
 
 const MAX_LIBRARY_SIZE = 500
@@ -110,17 +96,7 @@ export class FileLibrary implements IWorkflowLibrary {
       idf.set(token, Math.log((docCount + 1) / (docsWithToken + 1)) + 1)
     }
 
-    const maxPossibleScore = queryTokens.reduce((sum, qt) => sum + (idf.get(qt) ?? 0), 0)
-    const ceiling = maxPossibleScore > 0 ? maxPossibleScore : 1
-
-    const scored = searchable
-      .map((w, i) => {
-        const raw = computeTfIdf(queryTokens, docTokenArrays[i]!, idf)
-        const normalized = Math.min(raw / ceiling, 1)
-        const deployBoost = 1 + Math.log(w.deployCount + 1) * 0.05
-        const boosted = Math.min(normalized * deployBoost, 1)
-        return { workflow: w, score: boosted }
-      })
+    const scored = hybridScore(queryTokens, description, searchable, docTokenArrays, idf)
       .filter((m) => m.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
