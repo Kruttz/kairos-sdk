@@ -21,6 +21,15 @@ function tokenize(text: string): string[] {
     .filter((t) => t.length > 2)
 }
 
+function buildSearchCorpus(w: StoredWorkflow): string {
+  const nodeTokens = w.workflow.nodes.map((n) => {
+    const bare = n.type.split('.').pop() ?? ''
+    const spaced = bare.replace(/([A-Z])/g, ' $1').trim().toLowerCase()
+    return `${bare} ${spaced}`
+  })
+  return `${w.description} ${w.workflow.name} ${w.tags.join(' ')} ${nodeTokens.join(' ')}`
+}
+
 function computeTfIdf(queryTokens: string[], docTokens: string[], idf: Map<string, number>): number {
   if (docTokens.length === 0) return 0
   let score = 0
@@ -67,9 +76,7 @@ export class FileLibrary implements IWorkflowLibrary {
     const queryTokens = tokenize(description)
     if (queryTokens.length === 0) return []
 
-    const docTokenSets = this.workflows.map((w) =>
-      tokenize(`${w.description} ${w.workflow.name} ${w.tags.join(' ')}`),
-    )
+    const docTokenSets = this.workflows.map((w) => tokenize(buildSearchCorpus(w)))
 
     const docCount = this.workflows.length
     const idf = new Map<string, number>()
@@ -80,19 +87,20 @@ export class FileLibrary implements IWorkflowLibrary {
     }
 
     const scored = this.workflows
-      .map((w, i) => ({
-        workflow: w,
-        score: computeTfIdf(queryTokens, docTokenSets[i]!, idf),
-      }))
+      .map((w, i) => {
+        const raw = computeTfIdf(queryTokens, docTokenSets[i]!, idf)
+        const deployBoost = 1 + Math.log(w.deployCount + 1) * 0.05
+        return { workflow: w, score: raw * deployBoost }
+      })
       .filter((m) => m.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
 
-    return scored.map((m) => ({
-      workflow: m.workflow,
-      score: m.score,
-      mode: scoreToMode(m.score),
-    }))
+    const maxScore = scored[0]?.score ?? 1
+    return scored.map((m) => {
+      const normalized = maxScore > 0 ? m.score / maxScore : 0
+      return { workflow: m.workflow, score: normalized, mode: scoreToMode(normalized) }
+    })
   }
 
   async save(workflow: N8nWorkflow, metadata: WorkflowMetadataInput): Promise<string> {

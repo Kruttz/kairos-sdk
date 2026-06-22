@@ -204,11 +204,22 @@ export class Kairos {
     const topMatch = matches[0]
     const generationMode = topMatch ? scoreToMode(topMatch.score) : 'scratch' as const
 
+    const autoTags = Array.from(new Set(
+      workflow.nodes.flatMap((n) => {
+        const bare = n.type.split('.').pop() ?? ''
+        const tags = [bare]
+        if (n.type.includes('Trigger') || n.type.includes('trigger')) tags.push(`trigger:${bare}`)
+        if (n.type.includes('langchain')) tags.push('ai')
+        return tags
+      }),
+    ))
+
     const metadata: WorkflowMetadataInput = {
       description,
       generationMode,
       generationAttempts: designResult.attempts,
     }
+    if (autoTags.length > 0) metadata.tags = autoTags
     if (failurePatterns.length > 0) metadata.failurePatterns = failurePatterns
     if (matches.length > 0) metadata.sourceWorkflowIds = matches.map((m) => m.workflow.id)
     if (topMatch) metadata.topMatchScore = topMatch.score
