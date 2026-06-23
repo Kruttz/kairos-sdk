@@ -6,6 +6,8 @@
 
 **Turn plain English into deployed n8n workflows — validated, corrected, and deployed in one call.**
 
+![Kairos SDK Demo](demo.gif)
+
 Kairos is a TypeScript SDK that takes a natural-language description of an automation, calls Claude to generate n8n workflow JSON, runs it through a **23-rule structural validator** with an automatic correction loop (up to 3 attempts), and deploys the result to your n8n instance via REST API. A local workflow library with **hybrid retrieval** (TF-IDF + node fingerprinting + outcome history + cluster reranking) and telemetry-based feedback inject past failure patterns into future generations. With a seeded template library, Kairos achieves **100% first-try validation pass rate** across 20 benchmark prompts.
 
 ```ts
