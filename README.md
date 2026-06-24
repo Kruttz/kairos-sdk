@@ -369,6 +369,9 @@ try {
     for (const issue of err.issues) {
       console.error(`[Rule ${issue.rule}] ${issue.message}`)
     }
+    // Attempt metadata and warned rules are also available
+    console.log(err.attemptMetadata)  // per-attempt timing, tokens, issues
+    console.log(err.warnedRules)      // which pattern rules were warned about
   } else if (err instanceof GenerationError) {
     // Anthropic API call failed (auth, quota, timeout)
     console.error(err.message, err.cause)
@@ -386,7 +389,7 @@ try {
 |---|---|
 | `GenerationError` | Anthropic API call failed |
 | `ResponseParseError` | Claude responded but produced no usable tool call |
-| `ValidationError` | Workflow failed 23-rule validation after max retries |
+| `ValidationError` | Workflow failed 23-rule validation after max retries (carries `.attemptMetadata` and `.warnedRules`) |
 | `ProviderError` | Network/auth failure talking to n8n |
 | `ApiError` | n8n returned a 4xx or 5xx (carries `.statusCode`) |
 | `GuardError` | Input validation failed (empty description) or `delete()` called without `{ confirm: true }` |
@@ -406,6 +409,10 @@ kairos build "Monitor a webhook and log payloads" --dry-run
 
 # Seed library with n8n community templates
 kairos sync-templates --max 200
+
+# View pattern analysis
+kairos patterns
+kairos patterns --days 60 --json
 
 # Manage workflows
 kairos list
@@ -448,7 +455,22 @@ telemetry: '/path/to/telemetry/dir'
 
 Each event includes timestamp, session ID, token counts, validation issues, and duration — useful for benchmarking and analyzing the correction loop.
 
-Kairos also reads telemetry data to compute **per-rule failure rates** across all builds. Rules that fail frequently (>= 15% of builds) are automatically surfaced as warnings in the generation prompt, helping Claude avoid systemic issues. Failure rates use distinct session counting to avoid inflation from retry loops, and results are cached for 5 minutes.
+### Pattern Learning
+
+When telemetry is enabled, Kairos runs a **pattern analyzer** that learns from every build — successes and failures. The analyzer produces `patterns.json` which is fed back into future generations:
+
+- **Composite scoring** — patterns are scored using `rawConfidence × impact × recency × (1 + stickinessBoost)`, so frequent, recent, sticky failures rank highest
+- **Stickiness detection** — rules that persist across consecutive failed retry attempts (the LLM can't self-correct) get a scoring boost
+- **State lifecycle** — patterns progress through `draft → confirmed → resolved`, with per-rule resolved thresholds (5 clean builds) and 90-day TTL on resolved patterns
+- **Regression detection** — if a resolved rule starts failing again, it's flagged as regressed and prioritized in the prompt
+- **Warning effectiveness** — tracks whether warning the LLM about a rule actually prevented the failure, with per-rule pass/fail rates
+- **Schema migration** — pattern data auto-migrates across versions (currently v2) so no accumulated knowledge is lost on upgrades
+- **Rule co-occurrence** — identifies pairs of rules that commonly fail together (e.g., rules 5+17 always break at the same time)
+- **Session depth analysis** — tracks how many attempts each session needed (e.g., 80% are 1-attempt, 15% need 2, 5% need all 3)
+- **Warning cap** — max 10 patterns in the LLM prompt, prioritized: regressed > confirmed > drafts
+- **Analysis history** — each analysis run appends a summary to `pattern-history.jsonl` for trend tracking over time
+
+Run `kairos patterns` to view the current analysis, or `kairos patterns --json` for raw output.
 
 For CLI usage, set `KAIROS_TELEMETRY=true` in your environment.
 

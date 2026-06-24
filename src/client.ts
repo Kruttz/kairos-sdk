@@ -12,10 +12,12 @@ import { WorkflowDesigner } from './generation/designer.js'
 import type { DesignResult } from './generation/types.js'
 import { TelemetryCollector } from './telemetry/collector.js'
 import { TelemetryReader } from './telemetry/reader.js'
+import { PatternAnalyzer } from './telemetry/pattern-analyzer.js'
 import { nullLogger } from './utils/logger.js'
 import type { ILogger } from './utils/logger.js'
 import { scoreToMode } from './utils/thresholds.js'
 import { GuardError } from './errors/guard-error.js'
+import { ValidationError } from './errors/validation-error.js'
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 
@@ -27,6 +29,7 @@ export class Kairos {
   private readonly logger: ILogger
   private readonly telemetry: TelemetryCollector | null
   private readonly telemetryReader: TelemetryReader | null
+  private readonly patternAnalyzer: PatternAnalyzer | null
   private readonly model: string
   private saveQueue: Promise<string | null> = Promise.resolve(null)
 
@@ -56,12 +59,15 @@ export class Kairos {
     if (options.telemetry === true) {
       this.telemetry = new TelemetryCollector()
       this.telemetryReader = new TelemetryReader()
+      this.patternAnalyzer = new PatternAnalyzer()
     } else if (typeof options.telemetry === 'string') {
       this.telemetry = new TelemetryCollector(options.telemetry)
       this.telemetryReader = new TelemetryReader(options.telemetry)
+      this.patternAnalyzer = new PatternAnalyzer(options.telemetry)
     } else {
       this.telemetry = null
       this.telemetryReader = null
+      this.patternAnalyzer = null
     }
   }
 
@@ -108,11 +114,45 @@ export class Kairos {
       }
     }
 
-    const designResult = await this.designer.design(
-      { description, ...(options?.name ? { name: options.name } : {}) },
-      matches,
-      globalFailureRates,
-    )
+    let designResult: DesignResult
+    try {
+      designResult = await this.designer.design(
+        { description, ...(options?.name ? { name: options.name } : {}) },
+        matches,
+        globalFailureRates,
+      )
+    } catch (err) {
+      if (err instanceof ValidationError && err.attemptMetadata) {
+        for (const meta of err.attemptMetadata) {
+          await this.telemetry?.emit('generation_attempt', {
+            description,
+            attempt: meta.attempt,
+            temperature: meta.temperature,
+            durationMs: meta.durationMs,
+            tokensInput: meta.tokensInput,
+            tokensOutput: meta.tokensOutput,
+            validationPassed: meta.validationPassed,
+            issueCount: meta.issues.length,
+            issues: meta.issues.map((i) => ({ rule: i.rule, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
+          })
+        }
+        await this.telemetry?.emit('build_complete', {
+          description,
+          success: false,
+          totalAttempts: err.attemptMetadata.length,
+          totalDurationMs: Date.now() - buildStart,
+          totalTokensInput: err.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0),
+          totalTokensOutput: err.attemptMetadata.reduce((s, m) => s + m.tokensOutput, 0),
+          workflowName: null,
+          workflowId: null,
+          dryRun: options?.dryRun ?? false,
+          credentialsNeeded: 0,
+          warnedRules: err.warnedRules ?? [],
+        })
+        this.updatePatterns()
+      }
+      throw err
+    }
 
     await this.emitAttemptTelemetry(description, designResult)
 
@@ -137,7 +177,10 @@ export class Kairos {
         workflowId: null,
         dryRun: true,
         credentialsNeeded: designResult.credentialsNeeded.length,
+        warnedRules: designResult.warnedRules,
       })
+
+      this.updatePatterns()
 
       return {
         workflowId: null,
@@ -172,7 +215,10 @@ export class Kairos {
       workflowId: deployed.workflowId,
       dryRun: false,
       credentialsNeeded: designResult.credentialsNeeded.length,
+      warnedRules: designResult.warnedRules,
     })
+
+    this.updatePatterns()
 
     return {
       workflowId: deployed.workflowId,
@@ -200,7 +246,41 @@ export class Kairos {
     const matches = await this.library.search(description)
     const globalFailureRates = await this.telemetryReader?.getFailureRates() ?? []
 
-    const designResult = await this.designer.design({ description }, matches, globalFailureRates)
+    let designResult: DesignResult
+    try {
+      designResult = await this.designer.design({ description }, matches, globalFailureRates)
+    } catch (err) {
+      if (err instanceof ValidationError && err.attemptMetadata) {
+        for (const meta of err.attemptMetadata) {
+          await this.telemetry?.emit('generation_attempt', {
+            description,
+            attempt: meta.attempt,
+            temperature: meta.temperature,
+            durationMs: meta.durationMs,
+            tokensInput: meta.tokensInput,
+            tokensOutput: meta.tokensOutput,
+            validationPassed: meta.validationPassed,
+            issueCount: meta.issues.length,
+            issues: meta.issues.map((i) => ({ rule: i.rule, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
+          })
+        }
+        await this.telemetry?.emit('build_complete', {
+          description,
+          success: false,
+          totalAttempts: err.attemptMetadata.length,
+          totalDurationMs: Date.now() - buildStart,
+          totalTokensInput: err.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0),
+          totalTokensOutput: err.attemptMetadata.reduce((s, m) => s + m.tokensOutput, 0),
+          workflowName: null,
+          workflowId: null,
+          dryRun: false,
+          credentialsNeeded: 0,
+          warnedRules: err.warnedRules ?? [],
+        })
+        this.updatePatterns()
+      }
+      throw err
+    }
 
     await this.emitAttemptTelemetry(description, designResult)
 
@@ -224,7 +304,10 @@ export class Kairos {
       workflowId: deployed.workflowId,
       dryRun: false,
       credentialsNeeded: designResult.credentialsNeeded.length,
+      warnedRules: designResult.warnedRules,
     })
+
+    this.updatePatterns()
 
     return {
       workflowId: deployed.workflowId,
@@ -241,6 +324,17 @@ export class Kairos {
     await this.saveQueue.catch(() => {})
   }
 
+  private updatePatterns(): void {
+    if (!this.patternAnalyzer) return
+    this.saveQueue = this.saveQueue
+      .then(() => this.patternAnalyzer!.analyzeAndSave())
+      .then(() => null)
+      .catch((err: unknown) => {
+        this.logger.warn('Pattern analysis failed (non-fatal)', { err: String(err) })
+        return null
+      })
+  }
+
   private async emitAttemptTelemetry(description: string, designResult: DesignResult): Promise<void> {
     for (const meta of designResult.attemptMetadata) {
       await this.telemetry?.emit('generation_attempt', {
@@ -252,7 +346,7 @@ export class Kairos {
         tokensOutput: meta.tokensOutput,
         validationPassed: meta.validationPassed,
         issueCount: meta.issues.length,
-        issues: meta.issues.map((i) => ({ rule: i.rule, message: i.message })),
+        issues: meta.issues.map((i) => ({ rule: i.rule, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
       })
     }
   }

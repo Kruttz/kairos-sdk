@@ -53,19 +53,32 @@ export class N8nValidator {
     this.checkRule22(workflow, issues)
     this.checkRule23(workflow, issues)
 
+    // Enrich issues with nodeType by looking up nodeId
+    if (Array.isArray(workflow.nodes)) {
+      const nodeById = new Map(workflow.nodes.map(n => [n.id, n.type]))
+      for (const issue of issues) {
+        if (issue.nodeId && !issue.nodeType) {
+          const nt = nodeById.get(issue.nodeId)
+          if (nt) issue.nodeType = nt
+        }
+      }
+    }
+
     const errors = issues.filter((i) => i.severity === 'error')
     return { valid: errors.length === 0, issues }
   }
 
-  private err(issues: ValidationIssue[], rule: number, message: string, nodeId?: string): void {
+  private err(issues: ValidationIssue[], rule: number, message: string, nodeId?: string, nodeType?: string): void {
     const issue: ValidationIssue = { rule, severity: 'error', message }
     if (nodeId !== undefined) issue.nodeId = nodeId
+    if (nodeType !== undefined) issue.nodeType = nodeType
     issues.push(issue)
   }
 
-  private warn(issues: ValidationIssue[], rule: number, message: string, nodeId?: string): void {
+  private warn(issues: ValidationIssue[], rule: number, message: string, nodeId?: string, nodeType?: string): void {
     const issue: ValidationIssue = { rule, severity: 'warn', message }
     if (nodeId !== undefined) issue.nodeId = nodeId
+    if (nodeType !== undefined) issue.nodeType = nodeType
     issues.push(issue)
   }
 

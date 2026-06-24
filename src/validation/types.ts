@@ -3,6 +3,7 @@ export interface ValidationIssue {
   severity: 'error' | 'warn'
   message: string
   nodeId?: string
+  nodeType?: string
 }
 
 export interface ValidationResult {

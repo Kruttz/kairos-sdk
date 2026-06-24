@@ -410,4 +410,25 @@ describe('N8nValidator', () => {
     const rule23 = result.issues.filter((i) => i.rule === 23)
     expect(rule23.length).toBe(0)
   })
+
+  // A-2: nodeType enrichment
+  it('enriches issues with nodeType from workflow nodes', () => {
+    const w = baseWorkflow()
+    const slackId = 'aaaa1111-bbbb-4ccc-dddd-eeeeeeee0001'
+    w.nodes.push({
+      id: slackId,
+      name: 'Slack',
+      type: 'n8n-nodes-base.slack',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: {},
+      credentials: { slackApi: { id: '1', name: 'Slack' } },
+    })
+    // Remove connections so Slack is disconnected → triggers rule 7
+    w.connections = {}
+    const result = validator.validate(w)
+    const slackIssue = result.issues.find(i => i.nodeId === slackId)
+    expect(slackIssue).toBeDefined()
+    expect(slackIssue!.nodeType).toBe('n8n-nodes-base.slack')
+  })
 })

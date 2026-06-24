@@ -59,6 +59,7 @@ describe('TelemetryReader', () => {
         issues: [],
       }),
       makeEvent('build_complete', 's2', { success: true }),
+      makeEvent('build_complete', 's3', { success: true }),
     ]
     await writeFile(file, lines.join('\n'))
 
@@ -67,8 +68,8 @@ describe('TelemetryReader', () => {
     expect(rates).toHaveLength(1)
     expect(rates[0]!.rule).toBe(12)
     expect(rates[0]!.failureCount).toBe(1)
-    expect(rates[0]!.totalBuilds).toBe(2)
-    expect(rates[0]!.rate).toBe(0.5)
+    expect(rates[0]!.totalBuilds).toBe(3)
+    expect(rates[0]!.rate).toBeCloseTo(0.333, 2)
   })
 
   it('ignores non-YYYY-MM-DD.jsonl files', async () => {
@@ -89,6 +90,8 @@ describe('TelemetryReader', () => {
         issues: [{ rule: 5, message: 'test' }],
       }),
       makeEvent('build_complete', 's1', { success: true }),
+      makeEvent('build_complete', 's2', { success: true }),
+      makeEvent('build_complete', 's3', { success: true }),
     ]
     await writeFile(file, lines.join('\n'))
 
@@ -106,6 +109,8 @@ describe('TelemetryReader', () => {
         issues: [{ rule: 1, message: 'err' }],
       }),
       makeEvent('build_complete', 's1', { success: true }),
+      makeEvent('build_complete', 's2', { success: true }),
+      makeEvent('build_complete', 's3', { success: true }),
     ].join('\n'))
 
     const reader = new TelemetryReader(dir)

@@ -1,7 +1,6 @@
-import { readFile, readdir } from 'node:fs/promises'
-import { join } from 'node:path'
 import { homedir } from 'node:os'
-import type { TelemetryEvent } from './types.js'
+import { join } from 'node:path'
+import { readTelemetryEvents } from './event-reader.js'
 
 export interface RuleFailureRate {
   rule: number
@@ -30,10 +29,11 @@ export class TelemetryReader {
 
     const buildSessions = new Set(
       events
-        .filter((e) => e.eventType === 'build_complete' && !(e.data as { dryRun?: boolean }).dryRun)
+        .filter((e) => e.eventType === 'build_complete')
         .map((e) => e.sessionId),
     )
-    if (buildSessions.size === 0) return []
+    const MIN_BUILDS_FOR_RATES = 3
+    if (buildSessions.size < MIN_BUILDS_FOR_RATES) return []
 
     const ruleSessions = new Map<number, { sessions: Set<string>; messages: Map<string, number> }>()
 
@@ -76,39 +76,7 @@ export class TelemetryReader {
     return rates
   }
 
-  private async readRecentEvents(days: number): Promise<TelemetryEvent[]> {
-    let files: string[]
-    try {
-      files = await readdir(this.dir)
-    } catch {
-      return []
-    }
-
-    const cutoff = new Date()
-    cutoff.setDate(cutoff.getDate() - days)
-    const cutoffStr = cutoff.toISOString().slice(0, 10)
-
-    const datePattern = /^\d{4}-\d{2}-\d{2}\.jsonl$/
-    const recentFiles = files
-      .filter((f) => datePattern.test(f) && f >= cutoffStr)
-      .sort()
-
-    const events: TelemetryEvent[] = []
-    for (const file of recentFiles) {
-      try {
-        const content = await readFile(join(this.dir, file), 'utf-8')
-        for (const line of content.split('\n')) {
-          if (!line.trim()) continue
-          try {
-            events.push(JSON.parse(line) as TelemetryEvent)
-          } catch {
-            // skip malformed lines
-          }
-        }
-      } catch {
-        // skip unreadable files
-      }
-    }
-    return events
+  private async readRecentEvents(days: number) {
+    return readTelemetryEvents(this.dir, days)
   }
 }

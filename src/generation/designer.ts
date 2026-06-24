@@ -120,7 +120,7 @@ export class WorkflowDesigner {
       })
 
       if (validation.valid) {
-        return { workflow: parsed.workflow, credentialsNeeded: parsed.credentialsNeeded, attempts, attemptMetadata }
+        return { workflow: parsed.workflow, credentialsNeeded: parsed.credentialsNeeded, attempts, attemptMetadata, warnedRules: this.promptBuilder.getWarnedRules() }
       }
 
       lastErrors = errors
@@ -133,6 +133,8 @@ export class WorkflowDesigner {
     throw new ValidationError(
       `Workflow failed validation after ${MAX_ATTEMPTS} attempts`,
       finalIssues,
+      attemptMetadata,
+      this.promptBuilder.getWarnedRules(),
     )
   }
 

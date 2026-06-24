@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { PromptBuilder } from '../../../src/generation/prompt-builder.js'
 import { SYSTEM_PROMPT_V1 } from '../../../src/generation/prompts/v1.js'
 import type { WorkflowMatch } from '../../../src/library/types.js'
@@ -25,7 +28,7 @@ function makeMatch(score: number, storedOverrides?: Record<string, unknown>): Wo
 }
 
 describe('PromptBuilder', () => {
-  const builder = new PromptBuilder()
+  const builder = new PromptBuilder('/nonexistent/patterns.json')
 
   it('returns scratch mode when no matches', () => {
     const prompt = builder.build({ description: 'send a Slack message' }, [])
@@ -98,5 +101,182 @@ describe('PromptBuilder', () => {
     const prompt = builder.build({ description: 'test' }, [])
     const warningBlock = prompt.system.find((b) => b.text.includes('Known Failure Patterns'))
     expect(warningBlock).toBeUndefined()
+  })
+
+  describe('rich pattern rendering', () => {
+    let tmpDir: string
+    let patternsPath: string
+
+    beforeEach(() => {
+      tmpDir = join(tmpdir(), `kairos-pb-test-${Date.now()}`)
+      mkdirSync(tmpDir, { recursive: true })
+      patternsPath = join(tmpDir, 'patterns.json')
+    })
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true })
+    })
+
+    function makePattern(rule: number, overrides?: Record<string, unknown>) {
+      return {
+        rule,
+        failureCount: 5,
+        confidence: 0.5,
+        pipelineStage: 'node_generation',
+        state: 'draft',
+        trend: 'stable',
+        compositeScore: 0.05,
+        exampleMessages: [`Rule ${rule} failed`],
+        mitigation: `Fix rule ${rule}`,
+        scoringFactors: { rawConfidence: 0.5, impact: 0.1, recency: 1, stickinessBoost: 0 },
+        ...overrides,
+      }
+    }
+
+    it('caps warnings at 10 patterns, prioritizing confirmed', () => {
+      const patterns = []
+      for (let i = 1; i <= 15; i++) {
+        patterns.push(makePattern(i, {
+          state: i <= 5 ? 'confirmed' : 'draft',
+          compositeScore: 0.2 - i * 0.01,
+        }))
+      }
+      const analysis = {
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        summary: {},
+        topFailureRules: patterns,
+        failingCredentialTypes: [],
+        drift: { healthy: true, coveredRules: 23, totalRules: 23, alerts: [] },
+      }
+      writeFileSync(patternsPath, JSON.stringify(analysis))
+
+      const pb = new PromptBuilder(patternsPath)
+      const prompt = pb.build({ description: 'test' }, [])
+      const warningBlock = prompt.system.find(b => b.text.includes('Known Failure Patterns'))
+
+      expect(warningBlock).toBeDefined()
+      // All 5 confirmed should be present
+      for (let i = 1; i <= 5; i++) {
+        expect(warningBlock!.text).toContain(`Rule ${i}`)
+      }
+      // Only 5 drafts should fit (10 total - 5 confirmed = 5 drafts)
+      // Rules 11-15 should be cut
+      expect(warningBlock!.text).not.toContain('Rule 11')
+    })
+
+    it('renders CRITICAL REGRESSION prefix for regressed patterns', () => {
+      const analysis = {
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        summary: {},
+        topFailureRules: [
+          makePattern(17, {
+            state: 'confirmed',
+            pipelineStage: 'credential_injection',
+            regressed: true,
+            compositeScore: 0.2,
+          }),
+        ],
+        failingCredentialTypes: [],
+        drift: { healthy: true, coveredRules: 23, totalRules: 23, alerts: [] },
+      }
+      writeFileSync(patternsPath, JSON.stringify(analysis))
+
+      const pb = new PromptBuilder(patternsPath)
+      const prompt = pb.build({ description: 'test' }, [])
+      const warningBlock = prompt.system.find(b => b.text.includes('Known Failure Patterns'))
+
+      expect(warningBlock).toBeDefined()
+      expect(warningBlock!.text).toContain('CRITICAL REGRESSION:')
+    })
+
+    it('prioritizes regressed patterns over confirmed and drafts', () => {
+      const patterns = [
+        makePattern(1, { state: 'confirmed', compositeScore: 0.19 }),
+        makePattern(2, { state: 'confirmed', compositeScore: 0.18 }),
+        makePattern(3, { state: 'confirmed', compositeScore: 0.17 }),
+        makePattern(4, { state: 'confirmed', compositeScore: 0.16 }),
+        makePattern(5, { state: 'confirmed', compositeScore: 0.15 }),
+        makePattern(6, { state: 'draft', compositeScore: 0.14 }),
+        makePattern(7, { state: 'draft', compositeScore: 0.13 }),
+        makePattern(8, { state: 'draft', compositeScore: 0.12 }),
+        makePattern(9, { state: 'draft', compositeScore: 0.11 }),
+        makePattern(10, { state: 'draft', compositeScore: 0.10 }),
+        makePattern(11, { state: 'draft', compositeScore: 0.09 }),
+        // Regressed draft with LOW score — should still be included first
+        makePattern(20, { state: 'draft', compositeScore: 0.01, regressed: true }),
+      ]
+      const analysis = {
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        summary: {},
+        topFailureRules: patterns,
+        failingCredentialTypes: [],
+        drift: { healthy: true, coveredRules: 23, totalRules: 23, alerts: [] },
+      }
+      writeFileSync(patternsPath, JSON.stringify(analysis))
+
+      const pb = new PromptBuilder(patternsPath)
+      const warned = pb.getWarnedRules()
+
+      // Regressed rule 20 should be included despite low score
+      expect(warned).toContain(20)
+      // Cap at 10: regressed(1) + confirmed(5) + drafts(4) = 10
+      expect(warned.length).toBe(10)
+      // Rule 11 should be cut (lowest draft, pushed out by regressed)
+      expect(warned).not.toContain(11)
+    })
+
+    it('getWarnedRules caps at same set as buildFailureWarnings', () => {
+      const patterns = []
+      for (let i = 1; i <= 15; i++) {
+        patterns.push(makePattern(i, {
+          state: i <= 5 ? 'confirmed' : 'draft',
+          compositeScore: 0.2 - i * 0.01,
+        }))
+      }
+      const analysis = {
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        summary: {},
+        topFailureRules: patterns,
+        failingCredentialTypes: [],
+        drift: { healthy: true, coveredRules: 23, totalRules: 23, alerts: [] },
+      }
+      writeFileSync(patternsPath, JSON.stringify(analysis))
+
+      const pb = new PromptBuilder(patternsPath)
+      const warned = pb.getWarnedRules()
+
+      // Should be capped at 10
+      expect(warned.length).toBe(10)
+      // Rules 11-15 should NOT be in warned
+      expect(warned).not.toContain(11)
+      expect(warned).not.toContain(15)
+    })
+
+    it('getWarnedRules returns active pattern rule numbers', () => {
+      const analysis = {
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        summary: {},
+        topFailureRules: [
+          makePattern(17, { state: 'confirmed', confidence: 0.8 }),
+          makePattern(12, { state: 'draft', confidence: 0.3 }),
+          makePattern(5, { state: 'resolved', confidence: 0 }),
+        ],
+        failingCredentialTypes: [],
+        drift: { healthy: true, coveredRules: 23, totalRules: 23, alerts: [] },
+      }
+      writeFileSync(patternsPath, JSON.stringify(analysis))
+
+      const pb = new PromptBuilder(patternsPath)
+      const warned = pb.getWarnedRules()
+
+      expect(warned).toContain(17)
+      expect(warned).toContain(12)
+      expect(warned).not.toContain(5)
+    })
   })
 })

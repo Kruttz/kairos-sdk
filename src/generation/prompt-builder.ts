@@ -1,33 +1,23 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
 import type { WorkflowMatch } from '../library/types.js'
 import type { RuleFailureRate } from '../telemetry/reader.js'
+import type { PatternAnalysis, Pattern } from '../telemetry/pattern-analyzer.js'
 import type { DesignRequest, BuiltPrompt, SystemPromptBlock } from './types.js'
 import { SYSTEM_PROMPT_V1 } from './prompts/v1.js'
 import { scoreToMode } from '../utils/thresholds.js'
+import { RULE_MITIGATIONS } from '../validation/rule-metadata.js'
 
-const RULE_REMEDIES: Record<number, string> = {
-  1: 'Provide a non-empty workflow name string',
-  2: 'Include at least one node in the nodes array',
-  3: 'Every node must have a unique UUID v4 string as its id field',
-  4: 'Ensure all node ids are unique — no two nodes can share the same id',
-  5: 'Every node must have a non-empty type string',
-  6: 'Every node must have a positive integer typeVersion',
-  7: 'Every node must have a position array of exactly [x, y] numbers',
-  8: 'Every node must have a non-empty name string',
-  9: 'connections must be a plain object (use {} if no connections)',
-  10: 'Every node name in connections (source and target) must exactly match a name in the nodes array',
-  12: 'Remove forbidden fields: id, active, createdAt, updatedAt, versionId, meta, tags — these are server-assigned',
-  14: 'Include at least one trigger node (e.g. webhook, scheduleTrigger, manualTrigger)',
-  15: 'Node type strings must be fully qualified: "n8n-nodes-base.httpRequest" not just "httpRequest"',
-  16: 'All node names must be unique within the workflow',
-  17: 'Credentials must be an object with non-empty string id and name fields: { id: "placeholder-id", name: "My Credential" }',
-  18: 'AI sub-nodes (languageModel, memory, tool) must be the CONNECTION SOURCE pointing TO the agent — not the reverse',
-  19: 'Use known safe typeVersion values for each node type',
-  20: 'Remove connection cycles — ensure no node can reach itself through the connection graph',
-  21: 'When using webhook with responseMode "responseNode", include a respondToWebhook node in the flow',
-  22: 'Ensure all required parameters are set for each node type (e.g. webhook needs httpMethod and path)',
-}
+const CRITICAL_SCORE_THRESHOLD = 0.15
 
 export class PromptBuilder {
+  private readonly patternsPath: string
+
+  constructor(patternsPath?: string) {
+    this.patternsPath = patternsPath ?? join(homedir(), '.kairos', 'patterns.json')
+  }
+
   build(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string): BuiltPrompt {
     const mode = this.resolveMode(matches)
     const system = this.buildSystem(matches, mode, globalFailureRates, dynamicCatalog)
@@ -127,14 +117,118 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
     return blocks
   }
 
+  private loadPatterns(): Pattern[] {
+    try {
+      const raw = readFileSync(this.patternsPath, 'utf-8')
+      const analysis = JSON.parse(raw) as PatternAnalysis
+      const patterns = analysis.topFailureRules ?? []
+      return patterns.filter(p => typeof p.pipelineStage === 'string' && typeof p.state === 'string')
+    } catch {
+      return []
+    }
+  }
+
+  getWarnedRules(): number[] {
+    return this.getActivePatterns().map(p => p.rule)
+  }
+
+  private getActivePatterns(): Pattern[] {
+    const MAX_WARNED = 10
+    const all = this.loadPatterns()
+      .filter(p => p.state !== 'resolved' && p.confidence > 0)
+
+    const regressed = all.filter(p => p.regressed).sort((a, b) => b.compositeScore - a.compositeScore)
+    const confirmed = all.filter(p => !p.regressed && p.state === 'confirmed').sort((a, b) => b.compositeScore - a.compositeScore)
+    const drafts = all.filter(p => !p.regressed && p.state !== 'confirmed').sort((a, b) => b.compositeScore - a.compositeScore)
+
+    return [...regressed, ...confirmed, ...drafts].slice(0, MAX_WARNED)
+  }
+
   private buildFailureWarnings(matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[]): string | null {
+    const richPatterns = this.getActivePatterns()
+
+    if (richPatterns.length > 0) {
+      return this.buildStageGroupedWarnings(richPatterns, matches)
+    }
+
+    return this.buildLegacyWarnings(matches, globalFailureRates)
+  }
+
+  private buildStageGroupedWarnings(patterns: Pattern[], matches: WorkflowMatch[]): string | null {
+    const stageLabels: Record<string, string> = {
+      credential_injection: 'CREDENTIAL FORMATTING',
+      connection_wiring: 'CONNECTION WIRING',
+      node_generation: 'NODE GENERATION',
+      workflow_structure: 'WORKFLOW STRUCTURE',
+    }
+
+    const byStage = new Map<string, Pattern[]>()
+    for (const p of patterns) {
+      const list = byStage.get(p.pipelineStage) ?? []
+      list.push(p)
+      byStage.set(p.pipelineStage, list)
+    }
+
+    const sections: string[] = []
+    for (const [stage, stagePatterns] of byStage) {
+      const label = stageLabels[stage] ?? stage
+
+      const byMitigation = new Map<string, Pattern[]>()
+      for (const p of stagePatterns) {
+        const key = p.mitigation ?? `rule_${p.rule}`
+        const list = byMitigation.get(key) ?? []
+        list.push(p)
+        byMitigation.set(key, list)
+      }
+
+      const lines: string[] = []
+      for (const group of byMitigation.values()) {
+        if (group.length === 1) {
+          const p = group[0]!
+          const urgency = p.regressed ? 'CRITICAL REGRESSION: ' : (p.compositeScore ?? 0) >= CRITICAL_SCORE_THRESHOLD ? 'CRITICAL: ' : ''
+          const statePrefix = p.state === 'confirmed' ? '[CONFIRMED] ' : ''
+          const trendSuffix = p.trend === 'worsening' ? ' (GETTING WORSE)' : p.trend === 'improving' ? ' (improving)' : ''
+          const remedy = p.mitigation ?? RULE_MITIGATIONS[p.rule]
+          const remedyStr = remedy ? `\n  Fix: ${remedy}` : ''
+          lines.push(`- ${urgency}${statePrefix}Rule ${p.rule}${trendSuffix}: ${p.exampleMessages[0] ?? 'No example'}${remedyStr}`)
+        } else {
+          const ruleNums = group.map(p => p.rule).join(', ')
+          const totalFailures = group.reduce((s, p) => s + p.failureCount, 0)
+          const hasConfirmed = group.some(p => p.state === 'confirmed')
+          const statePrefix = hasConfirmed ? '[CONFIRMED] ' : ''
+          const remedy = group[0]!.mitigation
+          const remedyStr = remedy ? `\n  Fix: ${remedy}` : ''
+          lines.push(`- ${statePrefix}Rules ${ruleNums} (${totalFailures} failures combined): same root cause${remedyStr}`)
+        }
+      }
+      sections.push(`### ${label}\n${lines.join('\n')}`)
+    }
+
+    for (const match of matches) {
+      const fps = match.workflow.failurePatterns
+      if (!fps?.length) continue
+      const coveredRules = new Set(patterns.map(p => p.rule))
+      const extra = fps.filter(fp => !coveredRules.has(fp.rule))
+      for (const fp of extra) {
+        const remedy = RULE_MITIGATIONS[fp.rule]
+        const remedyStr = remedy ? ` — Fix: ${remedy}` : ''
+        sections.push(`- Rule ${fp.rule}: "${fp.message}"${remedyStr} (seen in similar workflows)`)
+      }
+    }
+
+    if (sections.length === 0) return null
+
+    return `## Known Failure Patterns — AVOID THESE\n\nGrouped by generation stage. Fix these BEFORE outputting your response:\n\n${sections.join('\n\n')}`
+  }
+
+  private buildLegacyWarnings(matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[]): string | null {
     const lines: string[] = []
 
     for (const match of matches) {
       const patterns = match.workflow.failurePatterns
       if (!patterns?.length) continue
       for (const fp of patterns) {
-        const remedy = RULE_REMEDIES[fp.rule]
+        const remedy = RULE_MITIGATIONS[fp.rule]
         const remedyStr = remedy ? ` — Fix: ${remedy}` : ''
         lines.push(`- Rule ${fp.rule}: "${fp.message}"${remedyStr} (seen ${fp.occurrences}x in similar workflows)`)
       }
@@ -142,7 +236,7 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
 
     const highFreqRules = globalFailureRates.filter((r) => r.rate >= 0.15)
     for (const rule of highFreqRules) {
-      const remedy = RULE_REMEDIES[rule.rule]
+      const remedy = RULE_MITIGATIONS[rule.rule]
       const remedyStr = remedy ? ` — Fix: ${remedy}` : ''
       lines.push(`- Rule ${rule.rule}: "${rule.commonMessage}"${remedyStr} (fails in ${Math.round(rule.rate * 100)}% of all builds)`)
     }

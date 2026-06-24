@@ -13,6 +13,7 @@ export interface DesignResult {
   credentialsNeeded: CredentialRequirement[]
   attempts: number
   attemptMetadata: AttemptMetadata[]
+  warnedRules: number[]
 }
 
 export interface SystemPromptBlock {

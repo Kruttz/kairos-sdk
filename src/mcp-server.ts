@@ -17,6 +17,7 @@ import { N8nFieldStripper } from './providers/n8n/stripper.js'
 import { N8nApiClient } from './providers/n8n/api-client.js'
 import { PromptBuilder } from './generation/prompt-builder.js'
 import { TelemetryReader } from './telemetry/reader.js'
+import { PatternAnalyzer } from './telemetry/pattern-analyzer.js'
 import { NodeSyncer, type SyncResult } from './validation/node-syncer.js'
 import { nullLogger } from './utils/logger.js'
 import type { N8nWorkflow } from './types/workflow.js'
@@ -352,6 +353,30 @@ server.tool(
           newNodes: result.newNodes,
           message: `Synced ${result.nodeCount} node types from your n8n instance (${result.newNodes} not in default catalog).`,
         }, null, 2),
+      }],
+    }
+  },
+)
+
+server.tool(
+  'kairos_patterns',
+  'Analyze telemetry data and return failure patterns, build stats, and credential breakdowns. Useful for understanding what goes wrong most often and how to prevent it.',
+  {
+    days: z.number().default(30).describe('Number of days of telemetry to analyze'),
+    limit: z.number().optional().describe('Maximum number of failure patterns to return'),
+  },
+  async ({ days, limit }) => {
+    const analyzer = PatternAnalyzer.fromEnv()
+    const analysis = await analyzer.analyzeAndSave(days)
+
+    if (limit !== undefined && limit > 0) {
+      analysis.topFailureRules = analysis.topFailureRules.slice(0, limit)
+    }
+
+    return {
+      content: [{
+        type: 'text' as const,
+        text: JSON.stringify(analysis, null, 2),
       }],
     }
   },

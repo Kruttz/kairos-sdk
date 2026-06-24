@@ -88,7 +88,8 @@ describe('Kairos MCP Server', () => {
     expect(names).toContain('kairos_delete')
     expect(names).toContain('kairos_executions')
     expect(names).toContain('kairos_sync')
-    expect(names).toHaveLength(11)
+    expect(names).toContain('kairos_patterns')
+    expect(names).toHaveLength(12)
   })
 
   it('kairos_prompt requires n8n credentials', async () => {

@@ -3,6 +3,7 @@
 import { Kairos } from './client.js'
 import { FileLibrary } from './library/file-library.js'
 import { TemplateSyncer } from './templates/syncer.js'
+import { PatternAnalyzer } from './telemetry/pattern-analyzer.js'
 
 const HELP = `
 Kairos SDK — LLM-powered n8n workflow generation
@@ -10,6 +11,7 @@ Kairos SDK — LLM-powered n8n workflow generation
 Usage:
   kairos init                         First-time setup wizard
   kairos build <description> [options]
+  kairos patterns [options]
   kairos list
   kairos get <id>
   kairos activate <id>
@@ -21,6 +23,10 @@ Build options:
   --dry-run       Generate and validate without deploying
   --name <name>   Override the generated workflow name
   --activate      Activate the workflow after deployment
+
+Patterns options:
+  --days <days>   Analysis window (default: 30)
+  --json          Output raw JSON instead of summary
 
 Sync options:
   --max <count>   Maximum templates to fetch (default: 500)
@@ -249,6 +255,84 @@ async function handleSyncTemplates(flags: Record<string, string | boolean>): Pro
   console.error(`  Paid:       ${result.skippedPaid} (skipped)`)
 }
 
+async function handlePatterns(flags: Record<string, string | boolean>): Promise<void> {
+  const days = typeof flags['days'] === 'string' ? parseInt(flags['days'], 10) : 30
+  const analyzer = PatternAnalyzer.fromEnv()
+
+  const analysis = await analyzer.analyzeAndSave(days)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(analysis, null, 2))
+    return
+  }
+
+  console.log(`\nKairos Pattern Analysis (last ${days} days)`)
+  console.log('─'.repeat(45))
+  console.log(`  Builds:          ${analysis.summary.totalBuilds}`)
+  console.log(`  Attempts:        ${analysis.summary.totalAttempts}`)
+  console.log(`  First-try pass:  ${(analysis.summary.firstTryPassRate * 100).toFixed(1)}%`)
+  console.log(`  Correction rate: ${(analysis.summary.correctionRate * 100).toFixed(1)}%`)
+  if (analysis.summary.singleAttemptFailRate !== undefined) {
+    console.log(`  Single-attempt failures: ${(analysis.summary.singleAttemptFailRate * 100).toFixed(1)}%`)
+  }
+  console.log(`  Avg duration:    ${(analysis.summary.avgDurationMs / 1000).toFixed(1)}s`)
+
+  const active = analysis.topFailureRules.filter(p => p.state !== 'resolved')
+  const resolved = analysis.topFailureRules.filter(p => p.state === 'resolved')
+
+  if (active.length > 0) {
+    console.log(`\nActive Failure Patterns:`)
+    for (const p of active) {
+      const regressionTag = p.regressed ? '[REGRESSION] ' : ''
+      const stateTag = p.state === 'confirmed' ? '[CONFIRMED]' : '[DRAFT]'
+      const trendIcon = p.trend === 'improving' ? ' ^' : p.trend === 'worsening' ? ' v' : p.trend === 'new' ? ' *' : ''
+      const stage = p.pipelineStage.replace(/_/g, ' ')
+      const scoreStr = p.compositeScore.toFixed(3)
+      console.log(`  Rule ${p.rule} ${regressionTag}${stateTag}${trendIcon} — score ${scoreStr} | ${p.failureCount} failures (${(p.confidence * 100).toFixed(1)}%) [${stage}]`)
+      const f = p.scoringFactors
+      console.log(`    Factors: confidence=${f.rawConfidence} × impact=${f.impact} × recency=${f.recency} + boost=${f.stickinessBoost}`)
+      if (p.mitigation) console.log(`    Fix: ${p.mitigation}`)
+      if (p.exampleMessages.length > 0) console.log(`    e.g. ${p.exampleMessages[0]}`)
+    }
+  } else {
+    console.log(`\nNo active failure patterns.`)
+  }
+
+  if (resolved.length > 0) {
+    console.log(`\nResolved Patterns:`)
+    for (const p of resolved) {
+      console.log(`  Rule ${p.rule} — previously confirmed, 0 failures in current window`)
+    }
+  }
+
+  if (analysis.failingCredentialTypes.length > 0) {
+    console.log(`\nFailing Credential Types:`)
+    for (const c of analysis.failingCredentialTypes) {
+      console.log(`  ${c.type}: ${c.count} failures`)
+    }
+  }
+
+  if (analysis.warningEffectiveness && analysis.warningEffectiveness.length > 0) {
+    console.log(`\nWarning Effectiveness:`)
+    for (const w of analysis.warningEffectiveness) {
+      console.log(`  Rule ${w.rule}: warned ${w.timesWarned}x, prevented ${w.timesWarnedAndPassed}x (${Math.round(w.effectivenessRate * 100)}% effective)`)
+    }
+  }
+
+  const drift = analysis.drift
+  if (drift) {
+    console.log(`\nDrift Detection: ${drift.healthy ? 'HEALTHY' : 'ALERTS FOUND'}`)
+    console.log(`  Coverage: ${drift.coveredRules}/${drift.totalRules} rules have mitigations + stage mappings`)
+    if (drift.alerts.length > 0) {
+      for (const a of drift.alerts) {
+        console.log(`  [${a.type}] Rule ${a.rule}: ${a.message}`)
+      }
+    }
+  }
+
+  console.log(`\nPatterns saved to ~/.kairos/patterns.json`)
+}
+
 async function handleInit(): Promise<void> {
   const { writeFile, readFile, mkdir } = await import('node:fs/promises')
   const { join } = await import('node:path')
@@ -359,6 +443,9 @@ async function main(): Promise<void> {
       break
     case 'build':
       await handleBuild(positional, flags)
+      break
+    case 'patterns':
+      await handlePatterns(flags)
       break
     case 'list':
       await handleList()

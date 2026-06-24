@@ -19,3 +19,35 @@ export interface AttemptMetadata {
   validationPassed: boolean
   issues: ValidationIssue[]
 }
+
+export interface BuildStartData {
+  description: string
+  model: string
+  dryRun: boolean
+}
+
+export interface GenerationAttemptData {
+  description: string
+  attempt: number
+  temperature: number
+  durationMs: number
+  tokensInput: number
+  tokensOutput: number
+  validationPassed: boolean
+  issueCount: number
+  issues: Array<{ rule: number; message: string; nodeId?: string | null }>
+}
+
+export interface BuildCompleteData {
+  description: string
+  success: boolean
+  totalAttempts: number
+  totalDurationMs: number
+  totalTokensInput: number
+  totalTokensOutput: number
+  workflowName: string | null
+  workflowId: string | null
+  dryRun: boolean
+  credentialsNeeded: number
+  warnedRules: number[]
+}
