@@ -26,9 +26,11 @@ id, active, createdAt, updatedAt, versionId, meta, isArchived, activeVersionId, 
 - Never reuse IDs, never use sequential fake IDs like "node-1"
 
 ### Credentials:
-- Only reference credentials with exact type names (see catalog below)
-- If credential ID is unknown, OMIT the credentials block entirely — never invent credential IDs
-- Never put API keys or tokens in parameters when a credential type exists
+- Each credential is keyed by its type string, with an object value containing id and name:
+  "credentials": { "slackOAuth2Api": { "id": "placeholder-id", "name": "My Slack Credential" } }
+- Use "placeholder-id" as the id — users replace this with their real credential ID from n8n after deployment
+- The credentialsNeeded field in your response declares what credentials the user must configure
+- Never put API keys or tokens directly in node parameters when a credential type exists
 
 ### Node names:
 - All node names must be unique within the workflow
@@ -72,6 +74,23 @@ When webhook responseMode is "responseNode", you MUST include a respondToWebhook
 
 ### Nested parameters:
 Node parameters like conditions, assignments, and rule intervals MUST include all required nested fields. Do not leave nested objects empty or partially filled.
+
+---
+
+## EXPRESSION SYNTAX — how to reference upstream node data
+
+### Accessing a field from an upstream node:
+- CORRECT:   $('NodeName').item.json.field
+- WRONG:     $node["NodeName"].json.field   ← deprecated accessor, fails at runtime (Rule 24)
+
+### Accessing array items from $json:
+- CORRECT:   $json.field                    ← n8n auto-flattens items; each item is already a flat object
+- WRONG:     $json.items[0].field           ← do not index into items[] (Rule 25)
+
+### Calling node data — always qualify with .first() or .all():
+- CORRECT:   $('NodeName').first().json.field   ← single item
+- CORRECT:   $('NodeName').all()                ← array of all items
+- WRONG:     $('NodeName').json                 ← throws at runtime without .first() or .all() (Rule 26)
 
 ---
 
@@ -174,6 +193,9 @@ Cron: { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 *
 5. At least one trigger node present
 6. Every AI Agent has an ai_languageModel sub-node
 7. settings block is complete with executionOrder: "v1"
+8. No deprecated $node["NodeName"].json — use $('NodeName').item.json.field
+9. No $json.items[0] array indexing — access fields directly as $json.field
+10. No bare $('NodeName').json — always use .first().json.field or .all()
 
 ---
 

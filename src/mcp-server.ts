@@ -148,7 +148,7 @@ server.tool(
 
 server.tool(
   'kairos_validate',
-  'Validate n8n workflow JSON against 23 structural rules. Returns pass/fail with specific issues. If validation fails, fix the issues and call this again. Errors block deployment; warnings are advisory.',
+  'Validate n8n workflow JSON against 26 structural rules. Returns pass/fail with specific issues. If validation fails, fix the issues and call this again. Errors block deployment; warnings are advisory.',
   {
     workflow: z.string().describe('The workflow JSON string to validate'),
   },

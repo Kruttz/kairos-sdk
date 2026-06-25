@@ -117,6 +117,75 @@ describe('PatternAnalyzer', () => {
     })
   })
 
+  // ── Semantic enrichment ────────────────────────────────────────────
+
+  describe('workflow type breakdown', () => {
+    it('tracks workflowType per rule failure and builds breakdown', async () => {
+      const events = [
+        makeEvent('build_start', 's1', { description: 'slack test', dryRun: false, model: 'test' }),
+        makeEvent('generation_attempt', 's1', {
+          validationPassed: false,
+          workflowType: 'slack',
+          issues: [{ rule: 17, message: 'cred fail' }],
+          durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+        }),
+        makeEvent('build_start', 's2', { description: 'slack test 2', dryRun: false, model: 'test' }),
+        makeEvent('generation_attempt', 's2', {
+          validationPassed: false,
+          workflowType: 'slack',
+          issues: [{ rule: 17, message: 'cred fail' }],
+          durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+        }),
+        makeEvent('build_start', 's3', { description: 'gmail test', dryRun: false, model: 'test' }),
+        makeEvent('generation_attempt', 's3', {
+          validationPassed: false,
+          workflowType: 'email',
+          issues: [{ rule: 17, message: 'cred fail' }],
+          durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+        }),
+      ]
+      await writeEvents(dir, `${todayStr()}.jsonl`, events)
+
+      const analyzer = new PatternAnalyzer(dir)
+      const result = await analyzer.analyze()
+      const p = result.topFailureRules.find(r => r.rule === 17)!
+
+      expect(p.workflowTypeBreakdown).toBeDefined()
+      expect(p.workflowTypeBreakdown!['slack']).toBe(2)
+      expect(p.workflowTypeBreakdown!['email']).toBe(1)
+    })
+
+    it('omits workflowTypeBreakdown when no workflowType in events', async () => {
+      const events = [
+        makeEvent('build_start', 's1', { description: 'test', dryRun: false, model: 'test' }),
+        makeEvent('generation_attempt', 's1', {
+          validationPassed: false,
+          issues: [{ rule: 5, message: 'missing type' }],
+          durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+        }),
+        makeEvent('build_start', 's2', { description: 'test', dryRun: false, model: 'test' }),
+        makeEvent('generation_attempt', 's2', {
+          validationPassed: false,
+          issues: [{ rule: 5, message: 'missing type' }],
+          durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+        }),
+        makeEvent('build_start', 's3', { description: 'test', dryRun: false, model: 'test' }),
+        makeEvent('generation_attempt', 's3', {
+          validationPassed: false,
+          issues: [{ rule: 5, message: 'missing type' }],
+          durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+        }),
+      ]
+      await writeEvents(dir, `${todayStr()}.jsonl`, events)
+
+      const analyzer = new PatternAnalyzer(dir)
+      const result = await analyzer.analyze()
+      const p = result.topFailureRules.find(r => r.rule === 5)!
+
+      expect(p.workflowTypeBreakdown).toBeUndefined()
+    })
+  })
+
   // ── Lifecycle states ───────────────────────────────────────────────
 
   describe('lifecycle states', () => {
@@ -1214,6 +1283,77 @@ describe('PatternAnalyzer', () => {
       expect(result.summary.attemptDistribution![1]).toBe(2) // s1, s4
       expect(result.summary.attemptDistribution![2]).toBe(1) // s2
       expect(result.summary.attemptDistribution![3]).toBe(1) // s3
+    })
+  })
+
+  // ── Session summaries ──────────────────────────────────────────────
+
+  describe('session summaries', () => {
+    it('buildSessionSummaries writes session-history.json on analyzeAndSave', async () => {
+      const { readFile } = await import('node:fs/promises')
+
+      const events = [
+        makeEvent('build_start', 's1', { description: 'send Slack notification', dryRun: false, model: 'test' }),
+        makeEvent('generation_attempt', 's1', {
+          validationPassed: true, issues: [],
+          durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+        }),
+        makeEvent('build_complete', 's1', {
+          description: 'send Slack notification', success: true, totalAttempts: 1,
+          totalDurationMs: 1000, totalTokensInput: 100, totalTokensOutput: 50,
+          workflowName: 'Slack Notifier', workflowId: 'wf-1', dryRun: false,
+          credentialsNeeded: 1, warnedRules: [], workflowType: 'slack',
+        }),
+      ]
+      await writeFile(join(dir, `${todayStr()}.jsonl`), events.join('\n'))
+
+      const analyzer = new PatternAnalyzer(dir)
+      await analyzer.analyzeAndSave()
+
+      const raw = await readFile(join(parentDir, 'session-history.json'), 'utf-8')
+      const sessions = JSON.parse(raw)
+
+      expect(Array.isArray(sessions)).toBe(true)
+      expect(sessions.length).toBe(1)
+      expect(sessions[0].description).toBe('send Slack notification')
+      expect(sessions[0].workflowType).toBe('slack')
+      expect(sessions[0].success).toBe(true)
+      expect(sessions[0].workflowName).toBe('Slack Notifier')
+    })
+
+    it('getSessions returns parsed sessions from session-history.json', async () => {
+      const events = [
+        makeEvent('build_start', 's1', { description: 'gmail alert', dryRun: false, model: 'test' }),
+        makeEvent('generation_attempt', 's1', {
+          validationPassed: false,
+          workflowType: 'email',
+          issues: [{ rule: 17, message: 'cred fail' }],
+          durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+        }),
+        makeEvent('build_complete', 's1', {
+          description: 'gmail alert', success: false, totalAttempts: 1,
+          totalDurationMs: 1000, totalTokensInput: 100, totalTokensOutput: 50,
+          workflowName: null, workflowId: null, dryRun: false,
+          credentialsNeeded: 0, warnedRules: [], workflowType: 'email',
+        }),
+      ]
+      await writeFile(join(dir, `${todayStr()}.jsonl`), events.join('\n'))
+
+      const analyzer = new PatternAnalyzer(dir)
+      await analyzer.analyzeAndSave()
+
+      const sessions = await analyzer.getSessions()
+
+      expect(sessions.length).toBe(1)
+      expect(sessions[0].success).toBe(false)
+      expect(sessions[0].workflowType).toBe('email')
+      expect(sessions[0].failedRules).toContain(17)
+    })
+
+    it('getSessions returns empty array when no session-history.json exists', async () => {
+      const analyzer = new PatternAnalyzer(dir)
+      const sessions = await analyzer.getSessions()
+      expect(sessions).toEqual([])
     })
   })
 })

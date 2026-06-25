@@ -69,6 +69,10 @@ describe('PromptBuilder', () => {
     expect(SYSTEM_PROMPT_V1).toContain('ai_languageModel')
     expect(SYSTEM_PROMPT_V1).toContain('SUB-NODE is the SOURCE')
     expect(SYSTEM_PROMPT_V1).toContain('executionOrder')
+    expect(SYSTEM_PROMPT_V1).toContain('EXPRESSION SYNTAX')
+    expect(SYSTEM_PROMPT_V1).toContain("$('NodeName').item.json.field")
+    expect(SYSTEM_PROMPT_V1).toContain('.first().json.field')
+    expect(SYSTEM_PROMPT_V1).toContain('$json.field')
   })
 
   it('includes failure warnings from matched workflow patterns', () => {
@@ -101,6 +105,96 @@ describe('PromptBuilder', () => {
     const prompt = builder.build({ description: 'test' }, [])
     const warningBlock = prompt.system.find((b) => b.text.includes('Known Failure Patterns'))
     expect(warningBlock).toBeUndefined()
+  })
+
+  describe('prompt profiles', () => {
+    let tmpDir: string
+    let patternsPath: string
+
+    beforeEach(() => {
+      tmpDir = join(tmpdir(), `kairos-profile-test-${Date.now()}`)
+      mkdirSync(tmpDir, { recursive: true })
+      patternsPath = join(tmpDir, 'patterns.json')
+    })
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true })
+    })
+
+    it('minimal profile: omits library blocks even when a direct match exists', () => {
+      const match = makeMatch(0.95) // score >= 0.92 = direct mode
+      const pb = new PromptBuilder('/nonexistent/patterns.json', 'minimal')
+      const prompt = pb.build({ description: 'test' }, [match])
+      const hasLibraryBlock = prompt.system.some(b => b.text.includes('Closely Matched Workflow'))
+      expect(hasLibraryBlock).toBe(false)
+    })
+
+    it('minimal profile: caps active patterns at 3', () => {
+      const patterns = []
+      for (let i = 1; i <= 12; i++) {
+        patterns.push({
+          rule: i, failureCount: 5, confidence: 0.5,
+          pipelineStage: 'node_generation', state: 'confirmed', trend: 'stable',
+          compositeScore: 0.2 - i * 0.01,
+          exampleMessages: [`Rule ${i} failed`],
+          mitigation: `Fix rule ${i}`,
+          scoringFactors: { rawConfidence: 0.5, impact: 0.1, recency: 1, stickinessBoost: 0 },
+        })
+      }
+      const analysis = {
+        schemaVersion: 2, generatedAt: new Date().toISOString(), summary: {},
+        topFailureRules: patterns, failingCredentialTypes: [],
+        drift: { healthy: true, coveredRules: 26, totalRules: 26, alerts: [] },
+      }
+      writeFileSync(patternsPath, JSON.stringify(analysis))
+
+      const pb = new PromptBuilder(patternsPath, 'minimal')
+      const warned = pb.getWarnedRules()
+      expect(warned.length).toBe(3)
+    })
+
+    it('standard profile: includes library blocks and up to 10 patterns (default behavior)', () => {
+      const match = makeMatch(0.95)
+      const pb = new PromptBuilder('/nonexistent/patterns.json', 'standard')
+      const prompt = pb.build({ description: 'test' }, [match])
+      const hasLibraryBlock = prompt.system.some(b => b.text.includes('Closely Matched Workflow'))
+      expect(hasLibraryBlock).toBe(true)
+    })
+
+    it('rich profile: adds proactive expression guidance when no expression patterns exist', () => {
+      const analysis = {
+        schemaVersion: 2, generatedAt: new Date().toISOString(), summary: {},
+        topFailureRules: [], failingCredentialTypes: [],
+        drift: { healthy: true, coveredRules: 26, totalRules: 26, alerts: [] },
+      }
+      writeFileSync(patternsPath, JSON.stringify(analysis))
+
+      const pb = new PromptBuilder(patternsPath, 'rich')
+      const prompt = pb.build({ description: 'test' }, [])
+      const hasExpressionGuidance = prompt.system.some(b => b.text.includes('Expression Syntax Quick Reference'))
+      expect(hasExpressionGuidance).toBe(true)
+    })
+
+    it('rich profile: skips proactive expression guidance when expression patterns already present', () => {
+      const analysis = {
+        schemaVersion: 2, generatedAt: new Date().toISOString(), summary: {},
+        topFailureRules: [{
+          rule: 24, failureCount: 3, confidence: 0.5,
+          pipelineStage: 'expression_syntax', state: 'confirmed', trend: 'stable',
+          compositeScore: 0.1, exampleMessages: ['bad expr'], mitigation: 'fix it',
+          scoringFactors: { rawConfidence: 0.5, impact: 0.1, recency: 1, stickinessBoost: 0 },
+        }],
+        failingCredentialTypes: [],
+        drift: { healthy: true, coveredRules: 26, totalRules: 26, alerts: [] },
+      }
+      writeFileSync(patternsPath, JSON.stringify(analysis))
+
+      const pb = new PromptBuilder(patternsPath, 'rich')
+      const prompt = pb.build({ description: 'test' }, [])
+      // Expression guidance block should NOT appear (already covered by warning)
+      const expressionBlocks = prompt.system.filter(b => b.text.includes('Expression Syntax Quick Reference'))
+      expect(expressionBlocks.length).toBe(0)
+    })
   })
 
   describe('rich pattern rendering', () => {
@@ -254,6 +348,62 @@ describe('PromptBuilder', () => {
       // Rules 11-15 should NOT be in warned
       expect(warned).not.toContain(11)
       expect(warned).not.toContain(15)
+    })
+
+    it('injects bad/good examples for rules that have them (e.g. Rule 24)', () => {
+      const analysis = {
+        schemaVersion: 2,
+        generatedAt: new Date().toISOString(),
+        summary: {},
+        topFailureRules: [
+          makePattern(24, {
+            state: 'confirmed',
+            pipelineStage: 'expression_syntax',
+            confidence: 0.6,
+            compositeScore: 0.1,
+            exampleMessages: ['Deprecated $node accessor used'],
+          }),
+        ],
+        failingCredentialTypes: [],
+        drift: { healthy: true, coveredRules: 26, totalRules: 26, alerts: [] },
+      }
+      writeFileSync(patternsPath, JSON.stringify(analysis))
+
+      const pb = new PromptBuilder(patternsPath)
+      const prompt = pb.build({ description: 'test' }, [])
+      const warningBlock = prompt.system.find(b => b.text.includes('Known Failure Patterns'))
+
+      expect(warningBlock).toBeDefined()
+      expect(warningBlock!.text).toContain("$node[\"Fetch Data\"].json.email")
+      expect(warningBlock!.text).toContain("$('Fetch Data').item.json.email")
+      expect(warningBlock!.text).toContain('Bad:')
+      expect(warningBlock!.text).toContain('Good:')
+    })
+
+    it('does not inject examples for rules without them (e.g. Rule 2)', () => {
+      const analysis = {
+        schemaVersion: 2,
+        generatedAt: new Date().toISOString(),
+        summary: {},
+        topFailureRules: [
+          makePattern(2, {
+            state: 'confirmed',
+            pipelineStage: 'node_generation',
+            compositeScore: 0.1,
+          }),
+        ],
+        failingCredentialTypes: [],
+        drift: { healthy: true, coveredRules: 26, totalRules: 26, alerts: [] },
+      }
+      writeFileSync(patternsPath, JSON.stringify(analysis))
+
+      const pb = new PromptBuilder(patternsPath)
+      const prompt = pb.build({ description: 'test' }, [])
+      const warningBlock = prompt.system.find(b => b.text.includes('Known Failure Patterns'))
+
+      expect(warningBlock).toBeDefined()
+      expect(warningBlock!.text).toContain('Rule 2')
+      expect(warningBlock!.text).not.toContain('Bad:')
     })
 
     it('getWarnedRules returns active pattern rule numbers', () => {

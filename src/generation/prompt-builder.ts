@@ -7,15 +7,34 @@ import type { PatternAnalysis, Pattern } from '../telemetry/pattern-analyzer.js'
 import type { DesignRequest, BuiltPrompt, SystemPromptBlock } from './types.js'
 import { SYSTEM_PROMPT_V1 } from './prompts/v1.js'
 import { scoreToMode } from '../utils/thresholds.js'
-import { RULE_MITIGATIONS } from '../validation/rule-metadata.js'
+import { RULE_MITIGATIONS, RULE_EXAMPLES } from '../validation/rule-metadata.js'
 
 const CRITICAL_SCORE_THRESHOLD = 0.15
 
+type PromptProfile = 'minimal' | 'standard' | 'rich'
+
+function resolveProfile(): PromptProfile {
+  const env = process.env['KAIROS_PROMPT_PROFILE']
+  if (env === 'minimal' || env === 'standard' || env === 'rich') return env
+  return 'standard'
+}
+
+const PROACTIVE_EXPRESSION_GUIDANCE = `## Expression Syntax Quick Reference\n\nAlways use these patterns in expressions:\n- Access node data:  $('NodeName').item.json.field  (not $node["NodeName"].json)\n- Access JSON field: $json.field  (not $json.items[0].field)\n- Single item:       $('NodeName').first().json.field\n- All items:         $('NodeName').all()`
+
 export class PromptBuilder {
   private readonly patternsPath: string
+  private readonly profile: PromptProfile
+  private _lastActivePatterns: Pattern[] | null = null
 
-  constructor(patternsPath?: string) {
+  constructor(patternsPath?: string, profile?: PromptProfile) {
     this.patternsPath = patternsPath ?? join(homedir(), '.kairos', 'patterns.json')
+    this.profile = profile ?? resolveProfile()
+  }
+
+  private resolveMaxPatterns(): number {
+    if (this.profile === 'minimal') return 3
+    if (this.profile === 'rich') return 15
+    return 10
   }
 
   build(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string): BuiltPrompt {
@@ -64,54 +83,64 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
       },
     ]
 
-    if (mode === 'reference' && matches.length > 0) {
-      const refText = matches
-        .slice(0, 3)
-        .map((m) => {
-          const nodes = m.workflow.workflow.nodes
-            .map((n) => `  - ${n.name} (${n.type} v${n.typeVersion})`)
-            .join('\n')
-          return `Reference workflow: "${m.workflow.description}" (similarity: ${m.score.toFixed(2)})\nNodes:\n${nodes}`
-        })
-        .join('\n\n')
+    if (this.profile !== 'minimal') {
+      if (mode === 'reference' && matches.length > 0) {
+        const refText = matches
+          .slice(0, 3)
+          .map((m) => {
+            const nodes = m.workflow.workflow.nodes
+              .map((n) => `  - ${n.name} (${n.type} v${n.typeVersion})`)
+              .join('\n')
+            return `Reference workflow: "${m.workflow.description}" (similarity: ${m.score.toFixed(2)})\nNodes:\n${nodes}`
+          })
+          .join('\n\n')
 
-      blocks.push({
-        type: 'text',
-        text: `## Similar Workflows From Library (for reference only — adapt, do not copy verbatim)\n\n${refText}`,
-      })
-    }
-
-    if (mode === 'direct' && matches[0]) {
-      const match = matches[0]
-      const json = JSON.stringify(match.workflow.workflow, null, 2)
-      if (json.length > 30_000) {
-        const nodes = match.workflow.workflow.nodes
-          .map((n) => `  - ${n.name} (${n.type} v${n.typeVersion})`)
-          .join('\n')
         blocks.push({
           type: 'text',
-          text: `## Closely Matched Workflow (score: ${match.score.toFixed(2)}) — too large for full JSON, using reference:\nNodes:\n${nodes}`,
-        })
-      } else {
-        blocks.push({
-          type: 'text',
-          text: `## Closely Matched Workflow (score: ${match.score.toFixed(2)}) — adapt this structure:\n\n${json}`,
+          text: `## Similar Workflows From Library (for reference only — adapt, do not copy verbatim)\n\n${refText}`,
         })
       }
-    }
 
-    if (mode === 'scratch' && matches.length > 0 && matches[0]!.score >= 0.40) {
-      const hint = matches[0]!
-      const nodeTypes = hint.workflow.workflow.nodes.map((n) => n.type.split('.').pop()).join(', ')
-      blocks.push({
-        type: 'text',
-        text: `## Weak Structural Hint\nA loosely similar workflow (score: ${hint.score.toFixed(2)}) used these node types: ${nodeTypes}`,
-      })
+      if (mode === 'direct' && matches[0]) {
+        const match = matches[0]
+        const json = JSON.stringify(match.workflow.workflow, null, 2)
+        if (json.length > 30_000) {
+          const nodes = match.workflow.workflow.nodes
+            .map((n) => `  - ${n.name} (${n.type} v${n.typeVersion})`)
+            .join('\n')
+          blocks.push({
+            type: 'text',
+            text: `## Closely Matched Workflow (score: ${match.score.toFixed(2)}) — too large for full JSON, using reference:\nNodes:\n${nodes}`,
+          })
+        } else {
+          blocks.push({
+            type: 'text',
+            text: `## Closely Matched Workflow (score: ${match.score.toFixed(2)}) — adapt this structure:\n\n${json}`,
+          })
+        }
+      }
+
+      if (mode === 'scratch' && matches.length > 0 && matches[0]!.score >= 0.40) {
+        const hint = matches[0]!
+        const nodeTypes = hint.workflow.workflow.nodes.map((n) => n.type.split('.').pop()).join(', ')
+        blocks.push({
+          type: 'text',
+          text: `## Weak Structural Hint\nA loosely similar workflow (score: ${hint.score.toFixed(2)}) used these node types: ${nodeTypes}`,
+        })
+      }
     }
 
     const warnings = this.buildFailureWarnings(matches, globalFailureRates)
     if (warnings) {
       blocks.push({ type: 'text', text: warnings })
+    }
+
+    if (this.profile === 'rich') {
+      const expressionRules = new Set([24, 25, 26])
+      const expressionAlreadyCovered = (this._lastActivePatterns ?? []).some(p => expressionRules.has(p.rule))
+      if (!expressionAlreadyCovered) {
+        blocks.push({ type: 'text', text: PROACTIVE_EXPRESSION_GUIDANCE })
+      }
     }
 
     return blocks
@@ -129,11 +158,11 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
   }
 
   getWarnedRules(): number[] {
-    return this.getActivePatterns().map(p => p.rule)
+    const patterns = this._lastActivePatterns ?? this.getActivePatterns(this.resolveMaxPatterns())
+    return patterns.map(p => p.rule)
   }
 
-  private getActivePatterns(): Pattern[] {
-    const MAX_WARNED = 10
+  private getActivePatterns(maxCount = 10): Pattern[] {
     const all = this.loadPatterns()
       .filter(p => p.state !== 'resolved' && p.confidence > 0)
 
@@ -141,11 +170,12 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
     const confirmed = all.filter(p => !p.regressed && p.state === 'confirmed').sort((a, b) => b.compositeScore - a.compositeScore)
     const drafts = all.filter(p => !p.regressed && p.state !== 'confirmed').sort((a, b) => b.compositeScore - a.compositeScore)
 
-    return [...regressed, ...confirmed, ...drafts].slice(0, MAX_WARNED)
+    return [...regressed, ...confirmed, ...drafts].slice(0, maxCount)
   }
 
   private buildFailureWarnings(matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[]): string | null {
-    const richPatterns = this.getActivePatterns()
+    const richPatterns = this.getActivePatterns(this.resolveMaxPatterns())
+    this._lastActivePatterns = richPatterns
 
     if (richPatterns.length > 0) {
       return this.buildStageGroupedWarnings(richPatterns, matches)
@@ -191,7 +221,9 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
           const trendSuffix = p.trend === 'worsening' ? ' (GETTING WORSE)' : p.trend === 'improving' ? ' (improving)' : ''
           const remedy = p.mitigation ?? RULE_MITIGATIONS[p.rule]
           const remedyStr = remedy ? `\n  Fix: ${remedy}` : ''
-          lines.push(`- ${urgency}${statePrefix}Rule ${p.rule}${trendSuffix}: ${p.exampleMessages[0] ?? 'No example'}${remedyStr}`)
+          const ex = RULE_EXAMPLES[p.rule]
+          const exampleStr = ex ? `\n  Bad:  ${ex.bad}\n  Good: ${ex.good}` : ''
+          lines.push(`- ${urgency}${statePrefix}Rule ${p.rule}${trendSuffix}: ${p.exampleMessages[0] ?? 'No example'}${remedyStr}${exampleStr}`)
         } else {
           const ruleNums = group.map(p => p.rule).join(', ')
           const totalFailures = group.reduce((s, p) => s + p.failureCount, 0)

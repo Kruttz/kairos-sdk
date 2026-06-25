@@ -35,7 +35,8 @@ export interface GenerationAttemptData {
   tokensOutput: number
   validationPassed: boolean
   issueCount: number
-  issues: Array<{ rule: number; message: string; nodeId?: string | null }>
+  issues: Array<{ rule: number; message: string; nodeId?: string | null; nodeType?: string | null }>
+  workflowType?: string | null
 }
 
 export interface BuildCompleteData {
@@ -50,4 +51,5 @@ export interface BuildCompleteData {
   dryRun: boolean
   credentialsNeeded: number
   warnedRules: number[]
+  workflowType?: string | null
 }

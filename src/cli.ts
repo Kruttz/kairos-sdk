@@ -12,6 +12,7 @@ Usage:
   kairos init                         First-time setup wizard
   kairos build <description> [options]
   kairos patterns [options]
+  kairos sessions [options]
   kairos list
   kairos get <id>
   kairos activate <id>
@@ -28,15 +29,23 @@ Patterns options:
   --days <days>   Analysis window (default: 30)
   --json          Output raw JSON instead of summary
 
+Sessions options:
+  --limit <n>     Number of recent sessions to show (default: 20)
+  --json          Output raw JSON instead of summary
+
 Sync options:
   --max <count>   Maximum templates to fetch (default: 500)
 
 Environment variables:
-  ANTHROPIC_API_KEY  Anthropic API key (required)
-  N8N_BASE_URL       n8n instance URL (required for deploy, optional for --dry-run)
-  N8N_API_KEY        n8n API key (required for deploy, optional for --dry-run)
-  KAIROS_MODEL       Claude model override (default: claude-sonnet-4-6)
-  KAIROS_TELEMETRY   Set to "true" or a directory path to enable telemetry logging
+  ANTHROPIC_API_KEY       Anthropic API key (required)
+  N8N_BASE_URL            n8n instance URL (required for deploy, optional for --dry-run)
+  N8N_API_KEY             n8n API key (required for deploy, optional for --dry-run)
+  KAIROS_MODEL            Claude model override (default: claude-sonnet-4-6)
+  KAIROS_TELEMETRY        Set to "true" or a directory path to enable telemetry logging
+  KAIROS_PROMPT_PROFILE   minimal | standard | rich (default: standard)
+                          minimal: base prompt only, no library context, top 3 patterns
+                          standard: full library context, top 10 patterns (default)
+                          rich: full library context, top 15 patterns, proactive expression guidance
 `
 
 function getEnvOrExit(name: string): string {
@@ -293,6 +302,10 @@ async function handlePatterns(flags: Record<string, string | boolean>): Promise<
       console.log(`    Factors: confidence=${f.rawConfidence} × impact=${f.impact} × recency=${f.recency} + boost=${f.stickinessBoost}`)
       if (p.mitigation) console.log(`    Fix: ${p.mitigation}`)
       if (p.exampleMessages.length > 0) console.log(`    e.g. ${p.exampleMessages[0]}`)
+      if (p.workflowTypeBreakdown) {
+        const topType = Object.entries(p.workflowTypeBreakdown).sort((a, b) => b[1] - a[1])[0]
+        if (topType) console.log(`    Top workflow type: ${topType[0]} (${topType[1]} failures)`)
+      }
     }
   } else {
     console.log(`\nNo active failure patterns.`)
@@ -331,6 +344,34 @@ async function handlePatterns(flags: Record<string, string | boolean>): Promise<
   }
 
   console.log(`\nPatterns saved to ~/.kairos/patterns.json`)
+}
+
+async function handleSessions(flags: Record<string, string | boolean>): Promise<void> {
+  const limit = typeof flags['limit'] === 'string' ? parseInt(flags['limit'], 10) : 20
+  const analyzer = PatternAnalyzer.fromEnv()
+  const sessions = await analyzer.getSessions(limit)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(sessions, null, 2))
+    return
+  }
+
+  if (sessions.length === 0) {
+    console.log('No session history found. Run kairos patterns first to generate session data.')
+    return
+  }
+
+  console.log(`\nRecent Sessions (last ${sessions.length})`)
+  console.log('─'.repeat(60))
+
+  for (const s of [...sessions].reverse()) {
+    const status = s.success ? '✓' : '✗'
+    const typeTag = s.workflowType ? ` [${s.workflowType}]` : ''
+    const attemptsStr = s.attempts > 1 ? ` (${s.attempts} attempts)` : ''
+    const nameStr = s.workflowName ? `  ${s.workflowName}` : `  ${s.description.slice(0, 50)}`
+    const rulesStr = s.failedRules.length > 0 ? `  — rules ${s.failedRules.join(', ')} failed` : ''
+    console.log(`${s.date}  ${status}${nameStr}${attemptsStr}${typeTag}${rulesStr}`)
+  }
 }
 
 async function handleInit(): Promise<void> {
@@ -446,6 +487,9 @@ async function main(): Promise<void> {
       break
     case 'patterns':
       await handlePatterns(flags)
+      break
+    case 'sessions':
+      await handleSessions(flags)
       break
     case 'list':
       await handleList()

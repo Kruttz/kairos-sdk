@@ -33,6 +33,7 @@ export interface Pattern {
   mitigation: string | null
   resolvedAt?: string
   regressed?: boolean
+  workflowTypeBreakdown?: Record<string, number>
 }
 
 export interface DriftAlert {
@@ -54,6 +55,17 @@ export interface WarningEffectiveness {
   timesWarnedAndPassed: number
   timesWarnedAndFailed: number
   effectivenessRate: number
+}
+
+export interface SessionSummary {
+  sessionId: string
+  date: string
+  description: string
+  workflowType: string | null
+  attempts: number
+  success: boolean
+  failedRules: number[]
+  workflowName: string | null
 }
 
 export interface PatternAnalysis {
@@ -83,6 +95,7 @@ const PATTERN_SCHEMA_VERSION = 2
 export class PatternAnalyzer {
   private readonly telemetryDir: string
   private readonly outputDir: string
+  private _cachedEvents: Awaited<ReturnType<typeof readTelemetryEvents>> | null = null
 
   constructor(telemetryDir?: string) {
     const defaultDir = join(homedir(), '.kairos', 'telemetry')
@@ -116,13 +129,16 @@ export class PatternAnalyzer {
       }))
     }
     if (fromVersion < 2) {
-      migrated = migrated.map(p => ({
-        ...p,
-        scoringFactors: {
-          ...p.scoringFactors,
-          stickinessBoost: p.scoringFactors.stickinessBoost ?? (p.scoringFactors as unknown as Record<string, number>)['validationBoost'] ?? 0,
-        },
-      }))
+      migrated = migrated.map(p => {
+        const sf = p.scoringFactors ?? { rawConfidence: 0, impact: 0, recency: 0, stickinessBoost: 0 }
+        return {
+          ...p,
+          scoringFactors: {
+            ...sf,
+            stickinessBoost: sf.stickinessBoost ?? (sf as unknown as Record<string, number>)['validationBoost'] ?? 0,
+          },
+        }
+      })
     }
     return migrated
   }
@@ -130,6 +146,7 @@ export class PatternAnalyzer {
   async analyze(days = 30): Promise<PatternAnalysis> {
     const previousPatterns = await this.loadPreviousPatterns()
     const events = await this.readAllEvents(days)
+    this._cachedEvents = events
 
     const starts = events.filter(e => e.eventType === 'build_start')
     const attempts = events.filter(e => e.eventType === 'generation_attempt')
@@ -141,18 +158,21 @@ export class PatternAnalyzer {
       (a.data as { validationPassed?: boolean }).validationPassed === false
     )
 
-    const ruleFailures = new Map<number, { count: number; sessions: Set<string>; recencyWeights: number[]; allMessages: string[] }>()
+    const ruleFailures = new Map<number, { count: number; sessions: Set<string>; recencyWeights: number[]; allMessages: string[]; workflowTypes: Map<string, number> }>()
     const credentialFailures = new Map<string, number>()
 
     for (const a of failed) {
       const weight = this.recencyWeight(a.fileDate)
-      const data = a.data as { issues?: Array<{ rule: number; message: string }> }
+      const data = a.data as { issues?: Array<{ rule: number; message: string }>; workflowType?: string | null }
       for (const issue of data.issues ?? []) {
-        const entry = ruleFailures.get(issue.rule) ?? { count: 0, sessions: new Set<string>(), recencyWeights: [], allMessages: [] }
+        const entry = ruleFailures.get(issue.rule) ?? { count: 0, sessions: new Set<string>(), recencyWeights: [], allMessages: [], workflowTypes: new Map<string, number>() }
         entry.count++
         entry.sessions.add(a.sessionId)
         entry.recencyWeights.push(weight)
         entry.allMessages.push(issue.message)
+        if (data.workflowType) {
+          entry.workflowTypes.set(data.workflowType, (entry.workflowTypes.get(data.workflowType) ?? 0) + 1)
+        }
         ruleFailures.set(issue.rule, entry)
 
         if (issue.rule === 17) {
@@ -271,7 +291,7 @@ export class PatternAnalyzer {
         const stickiness = stickinessCount.get(rule) ?? 0
         const { compositeScore, factors } = this.computeCompositeScore(rawConfidence, entry.count, state, avgRecency, stickiness)
 
-        return {
+        const pattern: Pattern = {
           rule,
           failureCount: entry.count,
           confidence: Math.round(rawConfidence * 1000) / 1000,
@@ -283,6 +303,12 @@ export class PatternAnalyzer {
           exampleMessages: this.deduplicateMessages(entry.allMessages),
           mitigation: RULE_MITIGATIONS[rule] ?? null,
         }
+
+        if (entry.workflowTypes.size > 0) {
+          pattern.workflowTypeBreakdown = Object.fromEntries(entry.workflowTypes)
+        }
+
+        return pattern
       })
       .sort((a, b) => b.compositeScore - a.compositeScore)
 
@@ -468,7 +494,64 @@ export class PatternAnalyzer {
     const historyPath = join(this.outputDir, 'pattern-history.jsonl')
     await appendFile(historyPath, JSON.stringify(historySummary) + '\n', 'utf-8')
 
+    const sessions = await this.buildSessionSummaries(days)
+    const sessionHistoryPath = join(this.outputDir, 'session-history.json')
+    const sessionHistoryTmp = `${sessionHistoryPath}.tmp`
+    await writeFile(sessionHistoryTmp, JSON.stringify(sessions, null, 2), 'utf-8')
+    await rename(sessionHistoryTmp, sessionHistoryPath)
+
     return analysis
+  }
+
+  async getSessions(limit = 20): Promise<SessionSummary[]> {
+    try {
+      const raw = await fsReadFile(join(this.outputDir, 'session-history.json'), 'utf-8')
+      const all = JSON.parse(raw) as SessionSummary[]
+      return all.slice(-limit)
+    } catch { return [] }
+  }
+
+  private async buildSessionSummaries(days = 30): Promise<SessionSummary[]> {
+    const events = this._cachedEvents ?? await this.readAllEvents(days)
+    const buildCompletes = events.filter(e => e.eventType === 'build_complete')
+    const attemptsBySession = new Map<string, typeof events>()
+    for (const e of events.filter(e => e.eventType === 'generation_attempt')) {
+      const list = attemptsBySession.get(e.sessionId) ?? []
+      list.push(e)
+      attemptsBySession.set(e.sessionId, list)
+    }
+
+    const summaries: SessionSummary[] = buildCompletes.map(bc => {
+      const data = bc.data as {
+        description?: string
+        success?: boolean
+        totalAttempts?: number
+        workflowName?: string | null
+        workflowType?: string | null
+      }
+
+      const sessionAttempts = attemptsBySession.get(bc.sessionId) ?? []
+      const failedRules = Array.from(new Set(
+        sessionAttempts.flatMap(a => {
+          const ad = a.data as { validationPassed?: boolean; issues?: Array<{ rule: number }> }
+          if (ad.validationPassed !== false) return []
+          return (ad.issues ?? []).map(i => i.rule)
+        })
+      ))
+
+      return {
+        sessionId: bc.sessionId,
+        date: bc.fileDate,
+        description: data.description ?? '',
+        workflowType: data.workflowType ?? null,
+        attempts: data.totalAttempts ?? 1,
+        success: data.success ?? false,
+        failedRules,
+        workflowName: data.workflowName ?? null,
+      }
+    })
+
+    return summaries.sort((a, b) => a.date.localeCompare(b.date))
   }
 
   async getHistory(limit = 20): Promise<unknown[]> {
@@ -495,7 +578,7 @@ export class PatternAnalyzer {
         alerts.push({
           type: 'stale_pattern',
           rule: p.rule,
-          message: `Pattern references Rule ${p.rule} which does not exist in the current validator (rules 1-23)`,
+          message: `Pattern references Rule ${p.rule} which does not exist in the current validator (rules 1-26)`,
         })
       }
     }

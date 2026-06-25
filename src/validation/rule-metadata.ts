@@ -31,6 +31,30 @@ export const RULE_PIPELINE_STAGES: Record<number, PipelineStage> = {
   26: 'expression_syntax',
 }
 
+export interface RuleExample {
+  bad: string
+  good: string
+}
+
+export const RULE_EXAMPLES: Record<number, RuleExample> = {
+  17: {
+    bad:  '"credentials": { "slackOAuth2Api": "my-token" }',
+    good: '"credentials": { "slackOAuth2Api": { "id": "placeholder-id", "name": "My Slack OAuth" } }',
+  },
+  24: {
+    bad: '$node["Fetch Data"].json.email',
+    good: "$('Fetch Data').item.json.email",
+  },
+  25: {
+    bad: '$json.items[0].email',
+    good: '$json.email',
+  },
+  26: {
+    bad: "$('Fetch Data').json.email",
+    good: "$('Fetch Data').first().json.email",
+  },
+}
+
 export const RULE_MITIGATIONS: Record<number, string> = {
   1: 'Provide a non-empty workflow name string',
   2: 'Include at least one node in the nodes array',
@@ -48,7 +72,7 @@ export const RULE_MITIGATIONS: Record<number, string> = {
   14: 'Include at least one trigger node (e.g. scheduleTrigger, webhookTrigger, manualTrigger, or service-specific)',
   15: 'Node type strings must be fully qualified: "n8n-nodes-base.httpRequest" not just "httpRequest"',
   16: 'All node names must be unique within the workflow',
-  17: 'Credentials must be an object with non-empty string id and name fields: { id: "placeholder-id", name: "My Credential" }',
+  17: 'Each credential entry must be keyed by credential type with an object value: { "slackOAuth2Api": { "id": "placeholder-id", "name": "My Credential" } } — the key is the credential type, the value has id and name strings',
   18: 'AI sub-nodes (languageModel, memory, tool) must be the CONNECTION SOURCE pointing TO the agent — not the reverse',
   19: 'Use known safe typeVersion values for each node type',
   20: 'Remove connection cycles — ensure no node can reach itself through the connection graph',

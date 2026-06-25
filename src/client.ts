@@ -18,6 +18,7 @@ import type { ILogger } from './utils/logger.js'
 import { scoreToMode } from './utils/thresholds.js'
 import { GuardError } from './errors/guard-error.js'
 import { ValidationError } from './errors/validation-error.js'
+import { inferWorkflowType } from './utils/workflow-type.js'
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 
@@ -88,6 +89,7 @@ export class Kairos {
     this.validateDescription(description)
     this.logger.info('Kairos.build', { description, dryRun: options?.dryRun })
     const buildStart = Date.now()
+    const workflowType = inferWorkflowType(description)
 
     await this.telemetry?.emit('build_start', {
       description,
@@ -134,6 +136,7 @@ export class Kairos {
             validationPassed: meta.validationPassed,
             issueCount: meta.issues.length,
             issues: meta.issues.map((i) => ({ rule: i.rule, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
+            workflowType,
           })
         }
         await this.telemetry?.emit('build_complete', {
@@ -148,13 +151,14 @@ export class Kairos {
           dryRun: options?.dryRun ?? false,
           credentialsNeeded: 0,
           warnedRules: err.warnedRules ?? [],
+          workflowType,
         })
         this.updatePatterns()
       }
       throw err
     }
 
-    await this.emitAttemptTelemetry(description, designResult)
+    await this.emitAttemptTelemetry(description, designResult, workflowType)
 
     const workflow = options?.name
       ? { ...designResult.workflow, name: options.name }
@@ -178,6 +182,7 @@ export class Kairos {
         dryRun: true,
         credentialsNeeded: designResult.credentialsNeeded.length,
         warnedRules: designResult.warnedRules,
+        workflowType,
       })
 
       this.updatePatterns()
@@ -216,6 +221,7 @@ export class Kairos {
       dryRun: false,
       credentialsNeeded: designResult.credentialsNeeded.length,
       warnedRules: designResult.warnedRules,
+      workflowType,
     })
 
     this.updatePatterns()
@@ -235,6 +241,7 @@ export class Kairos {
     this.validateDescription(description)
     this.logger.info('Kairos.update', { id, description })
     const buildStart = Date.now()
+    const workflowType = inferWorkflowType(description)
 
     await this.telemetry?.emit('build_start', {
       description,
@@ -262,6 +269,7 @@ export class Kairos {
             validationPassed: meta.validationPassed,
             issueCount: meta.issues.length,
             issues: meta.issues.map((i) => ({ rule: i.rule, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
+            workflowType,
           })
         }
         await this.telemetry?.emit('build_complete', {
@@ -276,13 +284,14 @@ export class Kairos {
           dryRun: false,
           credentialsNeeded: 0,
           warnedRules: err.warnedRules ?? [],
+          workflowType,
         })
         this.updatePatterns()
       }
       throw err
     }
 
-    await this.emitAttemptTelemetry(description, designResult)
+    await this.emitAttemptTelemetry(description, designResult, workflowType)
 
     const provider = this.requireProvider()
     const deployed = await provider.update(id, designResult.workflow)
@@ -305,6 +314,7 @@ export class Kairos {
       dryRun: false,
       credentialsNeeded: designResult.credentialsNeeded.length,
       warnedRules: designResult.warnedRules,
+      workflowType,
     })
 
     this.updatePatterns()
@@ -335,7 +345,7 @@ export class Kairos {
       })
   }
 
-  private async emitAttemptTelemetry(description: string, designResult: DesignResult): Promise<void> {
+  private async emitAttemptTelemetry(description: string, designResult: DesignResult, workflowType: string | null): Promise<void> {
     for (const meta of designResult.attemptMetadata) {
       await this.telemetry?.emit('generation_attempt', {
         description,
@@ -347,6 +357,7 @@ export class Kairos {
         validationPassed: meta.validationPassed,
         issueCount: meta.issues.length,
         issues: meta.issues.map((i) => ({ rule: i.rule, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
+        workflowType,
       })
     }
   }

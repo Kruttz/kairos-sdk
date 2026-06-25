@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { N8nValidator } from '../../../src/validation/validator.js'
+import { RULE_EXAMPLES } from '../../../src/validation/rule-metadata.js'
 import type { N8nWorkflow } from '../../../src/types/workflow.js'
 
 const baseWorkflow = (): N8nWorkflow => ({
@@ -597,5 +598,17 @@ describe('N8nValidator', () => {
     const slackIssue = result.issues.find(i => i.nodeId === slackId)
     expect(slackIssue).toBeDefined()
     expect(slackIssue!.nodeType).toBe('n8n-nodes-base.slack')
+  })
+
+  // Regression guard: RULE_EXAMPLES "good" snippets must themselves pass validation
+  it('RULE_EXAMPLES[17] good snippet passes rule 17 (credential shape regression guard)', () => {
+    const goodSnippet = RULE_EXAMPLES[17]!.good
+    // goodSnippet: '"credentials": { "slackOAuth2Api": { "id": "placeholder-id", "name": "..." } }'
+    const credJsonStr = goodSnippet.replace(/^"credentials":\s*/, '')
+    const credentials = JSON.parse(credJsonStr) as Record<string, { id: string; name: string }>
+    const w = baseWorkflow()
+    w.nodes[0]!.credentials = credentials
+    const result = validator.validate(w)
+    expect(result.issues.filter((i) => i.rule === 17)).toHaveLength(0)
   })
 })
