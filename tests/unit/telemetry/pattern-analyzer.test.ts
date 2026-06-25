@@ -1356,4 +1356,98 @@ describe('PatternAnalyzer', () => {
       expect(sessions).toEqual([])
     })
   })
+
+  // ── runId grouping ──────────────────────────────────────────────────
+  describe('runId — per-build grouping', () => {
+    function makeEventWithRunId(eventType: string, sessionId: string, runId: string, data: Record<string, unknown>): string {
+      return JSON.stringify({ timestamp: new Date().toISOString(), sessionId, runId, eventType, data })
+    }
+
+    it('groups attempts by runId so multiple builds in one process are counted separately', async () => {
+      // Same sessionId (one process), two builds each with their own runId
+      const events = [
+        makeEventWithRunId('generation_attempt', 'proc1', 'run-A', {
+          validationPassed: false, issues: [{ rule: 17, severity: 'error', message: 'bad cred' }],
+          durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+        }),
+        makeEventWithRunId('generation_attempt', 'proc1', 'run-B', {
+          validationPassed: false, issues: [{ rule: 17, severity: 'error', message: 'bad cred' }],
+          durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+        }),
+      ]
+      await writeEvents(dir, `${todayStr()}.jsonl`, events)
+
+      const analyzer = new PatternAnalyzer(dir)
+      const result = await analyzer.analyze()
+      const p = result.topFailureRules.find(r => r.rule === 17)!
+
+      // Two separate builds (runId A and B) → confidence should reflect 2 unique build contexts
+      expect(p.failureCount).toBe(2)
+    })
+
+    it('falls back to sessionId for events without runId (backward compat)', async () => {
+      // Old-format events without runId — should still work
+      const events = [
+        makeEvent('generation_attempt', 'old-session', {
+          validationPassed: false, issues: [{ rule: 3, severity: 'error', message: 'bad id' }],
+          durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+        }),
+      ]
+      await writeEvents(dir, `${todayStr()}.jsonl`, events)
+
+      const analyzer = new PatternAnalyzer(dir)
+      const result = await analyzer.analyze()
+      expect(result.topFailureRules.find(r => r.rule === 3)).toBeDefined()
+    })
+  })
+
+  // ── severity filtering ──────────────────────────────────────────────
+  describe('severity filtering — warnings excluded from failure patterns', () => {
+    it('does not count warn-severity issues as failure patterns', async () => {
+      const events = [
+        makeEvent('generation_attempt', 's1', {
+          validationPassed: false,
+          issues: [
+            { rule: 3, severity: 'error', message: 'bad uuid' },
+            { rule: 11, severity: 'warn', message: 'node has no incoming connections' },
+          ],
+          durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+        }),
+      ]
+      await writeEvents(dir, `${todayStr()}.jsonl`, events)
+
+      const analyzer = new PatternAnalyzer(dir)
+      const result = await analyzer.analyze()
+
+      // Rule 3 (error) should appear
+      expect(result.topFailureRules.find(r => r.rule === 3)).toBeDefined()
+      // Rule 11 (warn) should NOT appear in failure patterns
+      expect(result.topFailureRules.find(r => r.rule === 11)).toBeUndefined()
+    })
+
+    it('counts only error-severity issues even when mixed with warnings in same attempt', async () => {
+      const events = []
+      // 4 attempts all failing with both an error rule and a warning rule
+      for (let i = 0; i < 4; i++) {
+        events.push(makeEvent('generation_attempt', `s${i}`, {
+          validationPassed: false,
+          issues: [
+            { rule: 17, severity: 'error', message: 'bad credential shape' },
+            { rule: 19, severity: 'warn', message: 'unsafe typeVersion' },
+          ],
+          durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+        }))
+      }
+      await writeEvents(dir, `${todayStr()}.jsonl`, events)
+
+      const analyzer = new PatternAnalyzer(dir)
+      const result = await analyzer.analyze()
+
+      const err = result.topFailureRules.find(r => r.rule === 17)
+      const warn = result.topFailureRules.find(r => r.rule === 19)
+      expect(err).toBeDefined()
+      expect(err!.failureCount).toBe(4)
+      expect(warn).toBeUndefined()
+    })
+  })
 })

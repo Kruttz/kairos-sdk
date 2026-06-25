@@ -4,6 +4,7 @@ export interface TelemetryEvent {
   schemaVersion: number
   timestamp: string
   sessionId: string
+  runId?: string
   eventType: 'build_start' | 'generation_attempt' | 'build_complete'
   data: Record<string, unknown>
 }
@@ -35,7 +36,7 @@ export interface GenerationAttemptData {
   tokensOutput: number
   validationPassed: boolean
   issueCount: number
-  issues: Array<{ rule: number; message: string; nodeId?: string | null; nodeType?: string | null }>
+  issues: Array<{ rule: number; severity: 'error' | 'warn'; message: string; nodeId?: string | null; nodeType?: string | null }>
   workflowType?: string | null
 }
 

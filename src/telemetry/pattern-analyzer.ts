@@ -163,11 +163,13 @@ export class PatternAnalyzer {
 
     for (const a of failed) {
       const weight = this.recencyWeight(a.fileDate)
-      const data = a.data as { issues?: Array<{ rule: number; message: string }>; workflowType?: string | null }
+      const buildId = a.runId ?? a.sessionId
+      const data = a.data as { issues?: Array<{ rule: number; severity?: string; message: string }>; workflowType?: string | null }
       for (const issue of data.issues ?? []) {
+        if (issue.severity === 'warn') continue
         const entry = ruleFailures.get(issue.rule) ?? { count: 0, sessions: new Set<string>(), recencyWeights: [], allMessages: [], workflowTypes: new Map<string, number>() }
         entry.count++
-        entry.sessions.add(a.sessionId)
+        entry.sessions.add(buildId)
         entry.recencyWeights.push(weight)
         entry.allMessages.push(issue.message)
         if (data.workflowType) {
@@ -223,9 +225,10 @@ export class PatternAnalyzer {
 
     const sessions = new Map<string, typeof attempts>()
     for (const a of attempts) {
-      const list = sessions.get(a.sessionId) ?? []
+      const buildId = a.runId ?? a.sessionId
+      const list = sessions.get(buildId) ?? []
       list.push(a)
-      sessions.set(a.sessionId, list)
+      sessions.set(buildId, list)
     }
 
     let firstTryPass = 0
@@ -258,7 +261,7 @@ export class PatternAnalyzer {
 
     const totalSessions = Math.max(sessions.size, 1)
 
-    // Stickiness: rules that persist across consecutive failed attempts (LLM can't self-correct)
+    // Stickiness: rules that persist across consecutive failed attempts within a build (LLM can't self-correct)
     const stickinessCount = new Map<number, number>()
     for (const sessionAttempts of sessions.values()) {
       if (sessionAttempts.length < 2) continue
@@ -395,7 +398,7 @@ export class PatternAnalyzer {
       if (warned.length === 0) continue
 
       const sessionFailedRules = new Set<number>()
-      const sessionAttempts = sessions.get(bc.sessionId) ?? []
+      const sessionAttempts = sessions.get(bc.runId ?? bc.sessionId) ?? []
       for (const a of sessionAttempts) {
         const ad = a.data as { validationPassed?: boolean; issues?: Array<{ rule: number }> }
         if (ad.validationPassed === false) {
@@ -514,11 +517,12 @@ export class PatternAnalyzer {
   private async buildSessionSummaries(days = 30): Promise<SessionSummary[]> {
     const events = this._cachedEvents ?? await this.readAllEvents(days)
     const buildCompletes = events.filter(e => e.eventType === 'build_complete')
-    const attemptsBySession = new Map<string, typeof events>()
+    const attemptsByBuild = new Map<string, typeof events>()
     for (const e of events.filter(e => e.eventType === 'generation_attempt')) {
-      const list = attemptsBySession.get(e.sessionId) ?? []
+      const buildId = e.runId ?? e.sessionId
+      const list = attemptsByBuild.get(buildId) ?? []
       list.push(e)
-      attemptsBySession.set(e.sessionId, list)
+      attemptsByBuild.set(buildId, list)
     }
 
     const summaries: SessionSummary[] = buildCompletes.map(bc => {
@@ -530,7 +534,7 @@ export class PatternAnalyzer {
         workflowType?: string | null
       }
 
-      const sessionAttempts = attemptsBySession.get(bc.sessionId) ?? []
+      const sessionAttempts = attemptsByBuild.get(bc.runId ?? bc.sessionId) ?? []
       const failedRules = Array.from(new Set(
         sessionAttempts.flatMap(a => {
           const ad = a.data as { validationPassed?: boolean; issues?: Array<{ rule: number }> }

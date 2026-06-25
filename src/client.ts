@@ -19,6 +19,7 @@ import { scoreToMode } from './utils/thresholds.js'
 import { GuardError } from './errors/guard-error.js'
 import { ValidationError } from './errors/validation-error.js'
 import { inferWorkflowType } from './utils/workflow-type.js'
+import { generateUUID } from './utils/uuid.js'
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 
@@ -89,13 +90,14 @@ export class Kairos {
     this.validateDescription(description)
     this.logger.info('Kairos.build', { description, dryRun: options?.dryRun })
     const buildStart = Date.now()
+    const runId = generateUUID()
     const workflowType = inferWorkflowType(description)
 
     await this.telemetry?.emit('build_start', {
       description,
       model: this.model,
       dryRun: options?.dryRun ?? false,
-    })
+    }, runId)
 
     await this.library.initialize()
     const matches = await this.library.search(description)
@@ -135,9 +137,9 @@ export class Kairos {
             tokensOutput: meta.tokensOutput,
             validationPassed: meta.validationPassed,
             issueCount: meta.issues.length,
-            issues: meta.issues.map((i) => ({ rule: i.rule, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
+            issues: meta.issues.map((i) => ({ rule: i.rule, severity: i.severity, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
             workflowType,
-          })
+          }, runId)
         }
         await this.telemetry?.emit('build_complete', {
           description,
@@ -152,13 +154,13 @@ export class Kairos {
           credentialsNeeded: 0,
           warnedRules: err.warnedRules ?? [],
           workflowType,
-        })
+        }, runId)
         this.updatePatterns()
       }
       throw err
     }
 
-    await this.emitAttemptTelemetry(description, designResult, workflowType)
+    await this.emitAttemptTelemetry(description, designResult, workflowType, runId)
 
     const workflow = options?.name
       ? { ...designResult.workflow, name: options.name }
@@ -183,7 +185,7 @@ export class Kairos {
         credentialsNeeded: designResult.credentialsNeeded.length,
         warnedRules: designResult.warnedRules,
         workflowType,
-      })
+      }, runId)
 
       this.updatePatterns()
 
@@ -222,7 +224,7 @@ export class Kairos {
       credentialsNeeded: designResult.credentialsNeeded.length,
       warnedRules: designResult.warnedRules,
       workflowType,
-    })
+    }, runId)
 
     this.updatePatterns()
 
@@ -241,13 +243,14 @@ export class Kairos {
     this.validateDescription(description)
     this.logger.info('Kairos.update', { id, description })
     const buildStart = Date.now()
+    const runId = generateUUID()
     const workflowType = inferWorkflowType(description)
 
     await this.telemetry?.emit('build_start', {
       description,
       model: this.model,
       dryRun: false,
-    })
+    }, runId)
 
     await this.library.initialize()
     const matches = await this.library.search(description)
@@ -268,9 +271,9 @@ export class Kairos {
             tokensOutput: meta.tokensOutput,
             validationPassed: meta.validationPassed,
             issueCount: meta.issues.length,
-            issues: meta.issues.map((i) => ({ rule: i.rule, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
+            issues: meta.issues.map((i) => ({ rule: i.rule, severity: i.severity, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
             workflowType,
-          })
+          }, runId)
         }
         await this.telemetry?.emit('build_complete', {
           description,
@@ -285,13 +288,13 @@ export class Kairos {
           credentialsNeeded: 0,
           warnedRules: err.warnedRules ?? [],
           workflowType,
-        })
+        }, runId)
         this.updatePatterns()
       }
       throw err
     }
 
-    await this.emitAttemptTelemetry(description, designResult, workflowType)
+    await this.emitAttemptTelemetry(description, designResult, workflowType, runId)
 
     const provider = this.requireProvider()
     const deployed = await provider.update(id, designResult.workflow)
@@ -315,7 +318,7 @@ export class Kairos {
       credentialsNeeded: designResult.credentialsNeeded.length,
       warnedRules: designResult.warnedRules,
       workflowType,
-    })
+    }, runId)
 
     this.updatePatterns()
 
@@ -345,7 +348,7 @@ export class Kairos {
       })
   }
 
-  private async emitAttemptTelemetry(description: string, designResult: DesignResult, workflowType: string | null): Promise<void> {
+  private async emitAttemptTelemetry(description: string, designResult: DesignResult, workflowType: string | null, runId: string): Promise<void> {
     for (const meta of designResult.attemptMetadata) {
       await this.telemetry?.emit('generation_attempt', {
         description,
@@ -356,9 +359,9 @@ export class Kairos {
         tokensOutput: meta.tokensOutput,
         validationPassed: meta.validationPassed,
         issueCount: meta.issues.length,
-        issues: meta.issues.map((i) => ({ rule: i.rule, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
+        issues: meta.issues.map((i) => ({ rule: i.rule, severity: i.severity, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
         workflowType,
-      })
+      }, runId)
     }
   }
 

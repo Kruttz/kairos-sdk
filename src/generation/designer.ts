@@ -167,6 +167,12 @@ export class WorkflowDesigner {
   }
 
   private extractToolUse(message: Anthropic.Message): ToolUseResult {
+    if (message.stop_reason === 'max_tokens') {
+      throw new GenerationError(
+        'Claude response was truncated (max_tokens reached) — the workflow may be too large. Try a simpler description or break it into smaller workflows.',
+      )
+    }
+
     const toolUseBlock = message.content.find(
       (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
     )

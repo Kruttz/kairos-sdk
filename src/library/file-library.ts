@@ -142,7 +142,12 @@ export class FileLibrary implements IWorkflowLibrary {
     }
     this.workflows.push(stored)
     if (this.workflows.length > MAX_LIBRARY_SIZE) {
-      this.workflows.sort((a, b) => (b.deployCount ?? 1) - (a.deployCount ?? 1))
+      // Sort by deployCount desc, but always keep the newly-added entry
+      this.workflows.sort((a, b) => {
+        if (a.id === id) return -1
+        if (b.id === id) return 1
+        return (b.deployCount ?? 0) - (a.deployCount ?? 0)
+      })
       this.workflows = this.workflows.slice(0, MAX_LIBRARY_SIZE)
     }
     await this.persist()

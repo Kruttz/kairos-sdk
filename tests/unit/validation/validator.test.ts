@@ -600,6 +600,38 @@ describe('N8nValidator', () => {
     expect(slackIssue!.nodeType).toBe('n8n-nodes-base.slack')
   })
 
+  // Rule 11 — AI sub-nodes should not be flagged as unreachable
+  it('rule 11: does not warn on AI sub-nodes that are sources of ai_* connections', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'AI Agent',
+      type: '@n8n/n8n-nodes-langchain.agent',
+      typeVersion: 1.9,
+      position: [470, 300],
+      parameters: {},
+    })
+    w.nodes.push({
+      id: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb',
+      name: 'OpenAI Model',
+      type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
+      typeVersion: 1.7,
+      position: [470, 500],
+      parameters: {},
+    })
+    w.connections['Manual Trigger'] = {
+      main: [[{ node: 'AI Agent', type: 'main', index: 0 }]],
+    }
+    // Correct direction: model sub-node sources the ai_languageModel connection
+    w.connections['OpenAI Model'] = {
+      ai_languageModel: [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]],
+    }
+    const result = validator.validate(w)
+    const rule11Issues = result.issues.filter(i => i.rule === 11)
+    // OpenAI Model is an ai_* source — should NOT get Rule 11 warning
+    expect(rule11Issues.some(i => i.message.includes('OpenAI Model'))).toBe(false)
+  })
+
   // Regression guard: RULE_EXAMPLES "good" snippets must themselves pass validation
   it('RULE_EXAMPLES[17] good snippet passes rule 17 (credential shape regression guard)', () => {
     const goodSnippet = RULE_EXAMPLES[17]!.good

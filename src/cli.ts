@@ -234,7 +234,8 @@ async function handleDelete(positional: string[], flags: Record<string, string |
 }
 
 async function handleSyncTemplates(flags: Record<string, string | boolean>): Promise<void> {
-  const max = typeof flags['max'] === 'string' ? parseInt(flags['max'], 10) : 500
+  const maxRaw = typeof flags['max'] === 'string' ? parseInt(flags['max'], 10) : NaN
+  const max = Number.isNaN(maxRaw) ? 500 : maxRaw
   const library = new FileLibrary()
   const logger = {
     debug: () => {},
@@ -265,7 +266,8 @@ async function handleSyncTemplates(flags: Record<string, string | boolean>): Pro
 }
 
 async function handlePatterns(flags: Record<string, string | boolean>): Promise<void> {
-  const days = typeof flags['days'] === 'string' ? parseInt(flags['days'], 10) : 30
+  const daysRaw = typeof flags['days'] === 'string' ? parseInt(flags['days'], 10) : NaN
+  const days = Number.isNaN(daysRaw) ? 30 : daysRaw
   const analyzer = PatternAnalyzer.fromEnv()
 
   const analysis = await analyzer.analyzeAndSave(days)
@@ -347,7 +349,8 @@ async function handlePatterns(flags: Record<string, string | boolean>): Promise<
 }
 
 async function handleSessions(flags: Record<string, string | boolean>): Promise<void> {
-  const limit = typeof flags['limit'] === 'string' ? parseInt(flags['limit'], 10) : 20
+  const limitRaw = typeof flags['limit'] === 'string' ? parseInt(flags['limit'], 10) : NaN
+  const limit = Number.isNaN(limitRaw) ? 20 : limitRaw
   const analyzer = PatternAnalyzer.fromEnv()
   const sessions = await analyzer.getSessions(limit)
 

@@ -6,6 +6,7 @@ import { createInterface } from 'node:readline'
 export interface RawTelemetryEvent {
   eventType: string
   sessionId: string
+  runId?: string
   data: Record<string, unknown>
   fileDate: string
 }

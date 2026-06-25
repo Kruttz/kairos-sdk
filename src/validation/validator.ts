@@ -209,10 +209,16 @@ export class N8nValidator {
   private checkRule11(w: N8nWorkflow, issues: ValidationIssue[]): void {
     if (!Array.isArray(w.nodes) || typeof w.connections !== 'object' || w.connections === null) return
     const reachable = new Set<string>()
-    for (const [, outputs] of Object.entries(w.connections)) {
+    // Track nodes that are sources of ai_* connections — they are purposefully
+    // connectionless on main; they feed the agent as sub-nodes.
+    const aiSubNodeSources = new Set<string>()
+    for (const [sourceName, outputs] of Object.entries(w.connections)) {
       if (typeof outputs !== 'object' || outputs === null) continue
-      for (const portGroup of Object.values(outputs)) {
+      let hasAiPort = false
+      for (const [portName, portGroup] of Object.entries(outputs)) {
         if (!Array.isArray(portGroup)) continue
+        const isAiPort = portName.startsWith('ai_')
+        if (isAiPort) hasAiPort = true
         for (const targets of portGroup) {
           if (!Array.isArray(targets)) continue
           for (const target of targets) {
@@ -221,10 +227,13 @@ export class N8nValidator {
           }
         }
       }
+      if (hasAiPort) aiSubNodeSources.add(sourceName)
     }
     for (const node of w.nodes) {
       if (node.type.includes('stickyNote')) continue
-      if (!this.isTriggerNode(node) && !reachable.has(node.name)) {
+      if (this.isTriggerNode(node)) continue
+      if (aiSubNodeSources.has(node.name)) continue
+      if (!reachable.has(node.name)) {
         this.warn(issues, 11, `Node "${node.name}" has no incoming connections and may never execute`, node.id)
       }
     }

@@ -15,11 +15,12 @@ export class TelemetryCollector {
     this.sessionId = generateUUID()
   }
 
-  async emit(eventType: TelemetryEvent['eventType'], data: Record<string, unknown>): Promise<void> {
+  async emit(eventType: TelemetryEvent['eventType'], data: Record<string, unknown>, runId?: string): Promise<void> {
     const event: TelemetryEvent = {
       schemaVersion: TELEMETRY_SCHEMA_VERSION,
       timestamp: new Date().toISOString(),
       sessionId: this.sessionId,
+      ...(runId ? { runId } : {}),
       eventType,
       data,
     }
