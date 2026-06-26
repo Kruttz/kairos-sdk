@@ -49,6 +49,8 @@ export type {
   ExecutionSummary,
   ExecutionDetail,
   CredentialRequirement,
+  SmokeTestResult,
+  SmokeTestStatus,
 } from './types/result.js'
 
 export type {

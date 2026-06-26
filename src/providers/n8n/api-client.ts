@@ -190,6 +190,34 @@ export class N8nApiClient {
     }
   }
 
+  async triggerManual(workflowId: string): Promise<string> {
+    const raw = await this.request<Record<string, unknown>>('POST', `/workflows/${workflowId}/run`)
+    const inner = raw['data'] as Record<string, unknown> | undefined
+    const execId = inner?.['executionId'] ?? raw['executionId']
+    if (execId === undefined || execId === null) {
+      throw new ProviderError(
+        `n8n trigger response missing executionId — got: ${JSON.stringify(raw)}`,
+      )
+    }
+    return String(execId)
+  }
+
+  async triggerWebhookTest(path: string): Promise<number> {
+    const cleanPath = path.startsWith('/') ? path : `/${path}`
+    const url = `${this.baseUrl.replace(/\/$/, '')}/webhook-test${cleanPath}`
+    this.logger.debug(`n8n POST webhook-test ${cleanPath}`)
+    try {
+      const response = await fetchWithTimeout(
+        url,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) },
+        REQUEST_TIMEOUT_MS,
+      )
+      return response.status
+    } catch (err) {
+      throw new ProviderError(`Webhook test request failed for path "${path}"`, err)
+    }
+  }
+
   private mapExecution(e: N8nExecutionResponse): ExecutionSummary {
     return {
       id: e.id,

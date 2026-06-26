@@ -15,6 +15,7 @@ export interface BuildOptions {
   dryRun?: boolean
   activate?: boolean
   name?: string
+  smokeTest?: boolean
 }
 
 export interface DeleteOptions {

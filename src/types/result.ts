@@ -4,6 +4,16 @@ export interface CredentialRequirement {
   description: string
 }
 
+export type SmokeTestStatus = 'passed' | 'failed' | 'error' | 'skipped'
+
+export interface SmokeTestResult {
+  status: SmokeTestStatus
+  triggerType: 'manual' | 'webhook' | 'skipped'
+  executionId?: string
+  durationMs?: number
+  error?: string
+}
+
 export interface BuildResult {
   workflowId: string | null
   name: string
@@ -12,6 +22,7 @@ export interface BuildResult {
   activationRequired: boolean
   generationAttempts: number
   dryRun: boolean
+  smokeTest?: SmokeTestResult
 }
 
 export interface DeployResult {

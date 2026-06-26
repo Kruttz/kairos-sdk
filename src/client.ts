@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { N8nWorkflow, Tag } from './types/workflow.js'
-import type { BuildResult, WorkflowListItem, ExecutionSummary, ExecutionDetail } from './types/result.js'
+import type { BuildResult, WorkflowListItem, ExecutionSummary, ExecutionDetail, SmokeTestResult } from './types/result.js'
 import type { ClientOptions, BuildOptions, DeleteOptions, ExecutionFilter } from './types/options.js'
 import type { IWorkflowLibrary, WorkflowMatch, WorkflowMetadataInput } from './library/types.js'
 import { NullLibrary } from './library/null-library.js'
@@ -213,6 +213,15 @@ export class Kairos {
       await provider.activate(deployed.workflowId)
     }
 
+    let smokeTestResult: SmokeTestResult | undefined
+    if (options?.smokeTest) {
+      smokeTestResult = await provider.smokeTest(deployed.workflowId, workflow).catch((err: unknown): SmokeTestResult => {
+        this.logger.warn('Smoke test threw unexpectedly', { err: String(err) })
+        return { status: 'error', triggerType: 'manual', error: String(err) }
+      })
+      this.logger.info('Smoke test complete', { status: smokeTestResult.status, triggerType: smokeTestResult.triggerType })
+    }
+
     const totalTokensInput = designResult.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0)
     const totalTokensOutput = designResult.attemptMetadata.reduce((s, m) => s + m.tokensOutput, 0)
 
@@ -241,6 +250,7 @@ export class Kairos {
       activationRequired: !options?.activate,
       generationAttempts: designResult.attempts,
       dryRun: false,
+      ...(smokeTestResult !== undefined ? { smokeTest: smokeTestResult } : {}),
     }
   }
 
