@@ -39,6 +39,7 @@ export type {
 export type {
   BuildResult,
   DeployResult,
+  SmokeTestResult,
   WorkflowListItem,
   ExecutionSummary,
   ExecutionDetail,

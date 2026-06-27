@@ -385,7 +385,7 @@ describe('PatternAnalyzer', () => {
   // ── Drift detection ────────────────────────────────────────────────
 
   describe('drift detection', () => {
-    it('reports healthy when all 26 rules are covered', async () => {
+    it('reports healthy when all 34 rules are covered', async () => {
       const events = [
         makeEvent('build_start', 's1', { description: 'test', dryRun: false, model: 'test' }),
         makeEvent('generation_attempt', 's1', {

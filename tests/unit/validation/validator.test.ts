@@ -644,6 +644,134 @@ describe('N8nValidator', () => {
     expect(result.issues.filter((i) => i.rule === 17)).toHaveLength(0)
   })
 
+  it('RULE_EXAMPLES[27] good snippet passes rule 27 (httpRequest URL regression guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[27]!.good}}`) as Record<string, unknown>
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0027-aaaa-4aaa-aaaa-aaaaaaaaaaae',
+      name: 'HTTP Guard',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: params,
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'HTTP Guard', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.filter((i) => i.rule === 27)).toHaveLength(0)
+  })
+
+  it('RULE_EXAMPLES[28] good snippet passes rule 28 (code node regression guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[28]!.good}}`) as Record<string, unknown>
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0028-aaaa-4aaa-aaaa-aaaaaaaaaaae',
+      name: 'Code Guard',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: params,
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Code Guard', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.filter((i) => i.rule === 28)).toHaveLength(0)
+  })
+
+  it('RULE_EXAMPLES[29] good snippet passes rule 29 (slack channel regression guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[29]!.good}}`) as Record<string, unknown>
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0029-aaaa-4aaa-aaaa-aaaaaaaaaaad',
+      name: 'Slack Guard',
+      type: 'n8n-nodes-base.slack',
+      typeVersion: 2.2,
+      position: [450, 300],
+      parameters: { resource: 'message', operation: 'post', ...params },
+      credentials: { slackOAuth2Api: { id: 'cred-1', name: 'Slack' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Slack Guard', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.filter((i) => i.rule === 29)).toHaveLength(0)
+  })
+
+  it('RULE_EXAMPLES[30] good snippet passes rule 30 (gmail recipient regression guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[30]!.good}}`) as Record<string, unknown>
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0030-aaaa-4aaa-aaaa-aaaaaaaaaaae',
+      name: 'Gmail Guard',
+      type: 'n8n-nodes-base.gmail',
+      typeVersion: 2.1,
+      position: [450, 300],
+      parameters: params,
+      credentials: { gmailOAuth2: { id: 'cred-1', name: 'Gmail' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Gmail Guard', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.filter((i) => i.rule === 30)).toHaveLength(0)
+  })
+
+  it('RULE_EXAMPLES[31] good snippet passes rule 31 (if conditions regression guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[31]!.good}}`) as Record<string, unknown>
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0031-aaaa-4aaa-aaaa-aaaaaaaaaaae',
+      name: 'Check Guard',
+      type: 'n8n-nodes-base.if',
+      typeVersion: 2.2,
+      position: [450, 300],
+      parameters: params,
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Check Guard', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.filter((i) => i.rule === 31)).toHaveLength(0)
+  })
+
+  it('RULE_EXAMPLES[32] good snippet passes rule 32 (set assignments regression guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[32]!.good}}`) as Record<string, unknown>
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0032-aaaa-4aaa-aaaa-aaaaaaaaaaad',
+      name: 'Set Guard',
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3.4,
+      position: [450, 300],
+      parameters: params,
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set Guard', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.filter((i) => i.rule === 32)).toHaveLength(0)
+  })
+
+  it('RULE_EXAMPLES[33] good snippet passes rule 33 (scheduleTrigger regression guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[33]!.good}}`) as Record<string, unknown>
+    const w = { ...baseWorkflow(), nodes: [] as N8nWorkflow['nodes'], connections: {} }
+    w.nodes.push({
+      id: 'aaaa0033-aaaa-4aaa-aaaa-aaaaaaaaaaad',
+      name: 'Schedule Guard',
+      type: 'n8n-nodes-base.scheduleTrigger',
+      typeVersion: 1.2,
+      position: [250, 300],
+      parameters: params,
+    })
+    const result = validator.validate(w)
+    expect(result.issues.filter((i) => i.rule === 33)).toHaveLength(0)
+  })
+
+  it('RULE_EXAMPLES[34] good snippet passes rule 34 (webhook path regression guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[34]!.good}}`) as Record<string, unknown>
+    const w = { ...baseWorkflow(), nodes: [] as N8nWorkflow['nodes'], connections: {} }
+    w.nodes.push({
+      id: 'aaaa0034-aaaa-4aaa-aaaa-aaaaaaaaaaae',
+      name: 'Webhook Guard',
+      type: 'n8n-nodes-base.webhook',
+      typeVersion: 2,
+      position: [250, 300],
+      parameters: params,
+    })
+    const result = validator.validate(w)
+    expect(result.issues.filter((i) => i.rule === 34)).toHaveLength(0)
+  })
+
   // Rule 27: httpRequest URL placeholders
   it('rule 27: warns when httpRequest URL is example.com', () => {
     const w = baseWorkflow()

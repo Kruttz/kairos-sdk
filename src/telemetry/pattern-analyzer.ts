@@ -582,7 +582,7 @@ export class PatternAnalyzer {
         alerts.push({
           type: 'stale_pattern',
           rule: p.rule,
-          message: `Pattern references Rule ${p.rule} which does not exist in the current validator (rules 1-26)`,
+          message: `Pattern references Rule ${p.rule} which does not exist in the current validator (rules 1-34)`,
         })
       }
     }

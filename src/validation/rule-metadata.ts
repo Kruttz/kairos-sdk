@@ -61,6 +61,38 @@ export const RULE_EXAMPLES: Record<number, RuleExample> = {
     bad: "$('Fetch Data').json.email",
     good: "$('Fetch Data').first().json.email",
   },
+  27: {
+    bad: '"url": "https://example.com/api/data"',
+    good: '"url": "https://api.yourservice.com/v1/endpoint"',
+  },
+  28: {
+    bad: '"jsCode": "// TODO: implement this"',
+    good: '"jsCode": "return items.map(item => ({ json: { result: item.json.value * 2 } }))"',
+  },
+  29: {
+    bad: '"channelId": ""',
+    good: '"channelId": { "__rl": true, "value": "C0123456789", "mode": "id" }',
+  },
+  30: {
+    bad: '"operation": "send", "to": ""',
+    good: '"operation": "send", "to": "recipient@example.com"',
+  },
+  31: {
+    bad: '"conditions": { "combinator": "and", "conditions": [] }',
+    good: '"conditions": { "combinator": "and", "conditions": [{ "leftValue": "={{ $json.status }}", "rightValue": "active", "operator": { "type": "string", "operation": "equals" } }] }',
+  },
+  32: {
+    bad: '"assignments": { "assignments": [] }',
+    good: '"assignments": { "assignments": [{ "id": "f1", "name": "status", "value": "processed", "type": "string" }] }',
+  },
+  33: {
+    bad: '"rule": { "interval": [] }',
+    good: '"rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 * * 1-5" }] }',
+  },
+  34: {
+    bad: '"path": "/my webhook"',
+    good: '"path": "my-webhook"',
+  },
 }
 
 export const RULE_MITIGATIONS: Record<number, string> = {

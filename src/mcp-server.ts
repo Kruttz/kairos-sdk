@@ -206,7 +206,7 @@ server.tool(
 
 server.tool(
   'kairos_validate',
-  'Validate n8n workflow JSON against 26 structural rules. Returns pass/fail with specific issues. If validation fails, fix the issues and call this again. Errors block deployment; warnings are advisory.',
+  'Validate n8n workflow JSON against 34 structural rules. Returns pass/fail with specific issues. If validation fails, fix the issues and call this again. Errors block deployment; warnings are advisory.',
   {
     workflow: z.string().describe('The workflow JSON string to validate'),
     kairos_run_id: z.string().optional().describe('Run ID from kairos_prompt — enables telemetry correlation'),
@@ -341,34 +341,33 @@ server.tool(
       await client.activateWorkflow(response.id)
     }
 
+    const session = kairos_run_id ? mcpSessions.get(kairos_run_id) : undefined
+
     // Save to library for future retrieval
     await library.initialize()
     await library.save(parsed, {
-      description: parsed.name,
+      description: session?.description ?? parsed.name,
       generationMode: 'scratch',
-      generationAttempts: 1,
+      generationAttempts: session?.validateAttempts ?? 1,
     })
 
-    if (mcpTelemetry && kairos_run_id) {
-      const session = mcpSessions.get(kairos_run_id)
-      if (session) {
-        await mcpTelemetry.emit('build_complete', {
-          description: session.description,
-          success: true,
-          totalAttempts: session.validateAttempts,
-          totalDurationMs: Date.now() - session.startTime,
-          totalTokensInput: 0,
-          totalTokensOutput: 0,
-          workflowName: response.name,
-          workflowId: response.id,
-          dryRun: false,
-          credentialsNeeded: 0,
-          warnedRules: session.warnedRules,
-          workflowType: session.workflowType,
-        }, kairos_run_id)
-        mcpSessions.delete(kairos_run_id)
-        PatternAnalyzer.fromEnv().analyzeAndSave().catch(() => {})
-      }
+    if (mcpTelemetry && kairos_run_id && session) {
+      await mcpTelemetry.emit('build_complete', {
+        description: session.description,
+        success: true,
+        totalAttempts: session.validateAttempts,
+        totalDurationMs: Date.now() - session.startTime,
+        totalTokensInput: 0,
+        totalTokensOutput: 0,
+        workflowName: response.name,
+        workflowId: response.id,
+        dryRun: false,
+        credentialsNeeded: 0,
+        warnedRules: session.warnedRules,
+        workflowType: session.workflowType,
+      }, kairos_run_id)
+      mcpSessions.delete(kairos_run_id)
+      PatternAnalyzer.fromEnv().analyzeAndSave().catch(() => {})
     }
 
     return {
