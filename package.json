@@ -62,6 +62,9 @@
   },
   "author": "Jordan Krutman",
   "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "peerDependencies": {
     "@anthropic-ai/sdk": ">=0.30.0"
   },

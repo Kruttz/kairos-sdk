@@ -476,7 +476,7 @@ async function handleInit(): Promise<void> {
 async function main(): Promise<void> {
   const { command, positional, flags } = parseArgs(process.argv)
 
-  if (!command || command === 'help' || flags['help'] === true) {
+  if (!command || command === 'help' || command === '--help' || flags['help'] === true) {
     console.log(HELP)
     return
   }

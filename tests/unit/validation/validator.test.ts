@@ -632,6 +632,186 @@ describe('N8nValidator', () => {
     expect(rule11Issues.some(i => i.message.includes('OpenAI Model'))).toBe(false)
   })
 
+  // Regression guards: RULE_EXAMPLES "bad" snippets must trigger their rule (reverse guards)
+  it('RULE_EXAMPLES[17] bad snippet triggers rule 17 (credential shape reverse guard)', () => {
+    const badSnippet = RULE_EXAMPLES[17]!.bad
+    // badSnippet: '"credentials": { "slackOAuth2Api": "my-token" }'
+    const credJsonStr = badSnippet.replace(/^"credentials":\s*/, '')
+    const credentials = JSON.parse(credJsonStr) as Record<string, unknown>
+    const w = baseWorkflow()
+    w.nodes[0]!.credentials = credentials
+    const result = validator.validate(w)
+    expect(result.issues.filter((i) => i.rule === 17)).toHaveLength(1)
+  })
+
+  it('RULE_EXAMPLES[24] bad snippet triggers rule 24 (expression accessor reverse guard)', () => {
+    // Wrap in ={{ }} — how expressions appear in real n8n parameters
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0024-aaaa-4aaa-aaaa-aaaaaaaaabbb',
+      name: 'Set R24',
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3.4,
+      position: [450, 300],
+      parameters: { value: `={{ ${RULE_EXAMPLES[24]!.bad} }}` },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set R24', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 24)).toBe(true)
+  })
+
+  it('RULE_EXAMPLES[25] bad snippet triggers rule 25 (items index reverse guard)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0025-aaaa-4aaa-aaaa-aaaaaaaaabbb',
+      name: 'Set R25',
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3.4,
+      position: [450, 300],
+      parameters: { value: `={{ ${RULE_EXAMPLES[25]!.bad} }}` },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set R25', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 25)).toBe(true)
+  })
+
+  it('RULE_EXAMPLES[26] bad snippet triggers rule 26 (bare accessor reverse guard)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0026-aaaa-4aaa-aaaa-aaaaaaaaabbb',
+      name: 'Set R26',
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3.4,
+      position: [450, 300],
+      parameters: { value: `={{ ${RULE_EXAMPLES[26]!.bad} }}` },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set R26', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 26)).toBe(true)
+  })
+
+  it('RULE_EXAMPLES[27] bad snippet triggers rule 27 (httpRequest URL reverse guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[27]!.bad}}`) as Record<string, unknown>
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0027-aaaa-4aaa-aaaa-aaaaaaaaabbb',
+      name: 'HTTP Bad',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: params,
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 27)).toBe(true)
+  })
+
+  it('RULE_EXAMPLES[28] bad snippet triggers rule 28 (code node reverse guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[28]!.bad}}`) as Record<string, unknown>
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0028-aaaa-4aaa-aaaa-aaaaaaaaabbb',
+      name: 'Code Bad',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: params,
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 28)).toBe(true)
+  })
+
+  it('RULE_EXAMPLES[29] bad snippet triggers rule 29 (slack channel reverse guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[29]!.bad}}`) as Record<string, unknown>
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0029-aaaa-4aaa-aaaa-aaaaaaaaabbb',
+      name: 'Slack Bad',
+      type: 'n8n-nodes-base.slack',
+      typeVersion: 2.2,
+      position: [450, 300],
+      parameters: { resource: 'message', operation: 'post', ...params },
+      credentials: { slackOAuth2Api: { id: 'c1', name: 'Slack' } },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 29)).toBe(true)
+  })
+
+  it('RULE_EXAMPLES[30] bad snippet triggers rule 30 (gmail recipient reverse guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[30]!.bad}}`) as Record<string, unknown>
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0030-aaaa-4aaa-aaaa-aaaaaaaaabbb',
+      name: 'Gmail Bad',
+      type: 'n8n-nodes-base.gmail',
+      typeVersion: 2.1,
+      position: [450, 300],
+      parameters: params,
+      credentials: { gmailOAuth2: { id: 'c1', name: 'Gmail' } },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 30)).toBe(true)
+  })
+
+  it('RULE_EXAMPLES[31] bad snippet triggers rule 31 (if conditions reverse guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[31]!.bad}}`) as Record<string, unknown>
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0031-aaaa-4aaa-aaaa-aaaaaaaaabbb',
+      name: 'Check Bad',
+      type: 'n8n-nodes-base.if',
+      typeVersion: 2.2,
+      position: [450, 300],
+      parameters: params,
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 31)).toBe(true)
+  })
+
+  it('RULE_EXAMPLES[32] bad snippet triggers rule 32 (set assignments reverse guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[32]!.bad}}`) as Record<string, unknown>
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0032-aaaa-4aaa-aaaa-aaaaaaaaabbb',
+      name: 'Set Bad',
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3.4,
+      position: [450, 300],
+      parameters: params,
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 32)).toBe(true)
+  })
+
+  it('RULE_EXAMPLES[33] bad snippet triggers rule 33 (scheduleTrigger reverse guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[33]!.bad}}`) as Record<string, unknown>
+    const w = { ...baseWorkflow(), nodes: [] as N8nWorkflow['nodes'], connections: {} }
+    w.nodes.push({
+      id: 'aaaa0033-aaaa-4aaa-aaaa-aaaaaaaaabbb',
+      name: 'Schedule Bad',
+      type: 'n8n-nodes-base.scheduleTrigger',
+      typeVersion: 1.2,
+      position: [250, 300],
+      parameters: params,
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 33)).toBe(true)
+  })
+
+  it('RULE_EXAMPLES[34] bad snippet triggers rule 34 (webhook path reverse guard)', () => {
+    const params = JSON.parse(`{${RULE_EXAMPLES[34]!.bad}}`) as Record<string, unknown>
+    const w = { ...baseWorkflow(), nodes: [] as N8nWorkflow['nodes'], connections: {} }
+    w.nodes.push({
+      id: 'aaaa0034-aaaa-4aaa-aaaa-aaaaaaaaabbb',
+      name: 'Webhook Bad',
+      type: 'n8n-nodes-base.webhook',
+      typeVersion: 2,
+      position: [250, 300],
+      parameters: params,
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 34)).toBe(true)
+  })
+
   // Regression guard: RULE_EXAMPLES "good" snippets must themselves pass validation
   it('RULE_EXAMPLES[17] good snippet passes rule 17 (credential shape regression guard)', () => {
     const goodSnippet = RULE_EXAMPLES[17]!.good

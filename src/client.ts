@@ -23,7 +23,7 @@ import { generateUUID } from './utils/uuid.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-const DEFAULT_MODEL = 'claude-sonnet-4-6'
+const DEFAULT_MODEL = process.env['KAIROS_MODEL'] ?? 'claude-sonnet-4-6'
 
 export class Kairos {
   private readonly provider: N8nProvider | null

@@ -137,7 +137,10 @@ interface BenchmarkSummary {
   neededCorrection: number
   avgDurationMs: number
   avgAttempts: number
+  /** First-try passes / total successful builds (excludes complete failures from denominator) */
   firstTryRate: number
+  /** First-try passes / ALL builds including complete failures — true overall first-try rate */
+  firstTryRateOverAll: number
   correctionRate: number
   libraryUsed: boolean
 }
@@ -226,13 +229,15 @@ async function runBenchmark(count: number, outputPath?: string, useLibrary = tru
     avgDurationMs: avgDuration,
     avgAttempts,
     firstTryRate: successes.length > 0 ? firstTry.length / successes.length : 0,
+    firstTryRateOverAll: results.length > 0 ? firstTry.length / results.length : 0,
     correctionRate: successes.length > 0 ? neededCorrection.length / successes.length : 0,
     libraryUsed: useLibrary,
   }
 
   console.log(`Total prompts:       ${summary.total}`)
   console.log(`Success rate:        ${summary.successes}/${summary.total} (${((summary.successes / summary.total) * 100).toFixed(1)}%)`)
-  console.log(`First-try pass:      ${summary.firstTry}/${summary.successes} (${(summary.firstTryRate * 100).toFixed(1)}%)`)
+  console.log(`First-try pass:      ${summary.firstTry}/${summary.successes} of successes (${(summary.firstTryRate * 100).toFixed(1)}%)`)
+  console.log(`First-try overall:   ${summary.firstTry}/${summary.total} of all builds (${(summary.firstTryRateOverAll * 100).toFixed(1)}%)`)
   console.log(`Needed correction:   ${summary.neededCorrection}/${summary.successes} (${(summary.correctionRate * 100).toFixed(1)}%)`)
   console.log(`Failures:            ${summary.failures}`)
   console.log(`Avg duration:        ${(summary.avgDurationMs / 1000).toFixed(1)}s`)

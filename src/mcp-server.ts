@@ -618,6 +618,11 @@ server.tool(
 )
 
 async function main() {
+  if (!process.env['ANTHROPIC_API_KEY']) {
+    process.stderr.write(
+      '[kairos-mcp] WARNING: ANTHROPIC_API_KEY is not set — kairos_prompt will fail. Set it before using workflow generation tools.\n',
+    )
+  }
   const transport = new StdioServerTransport()
   await server.connect(transport)
 }

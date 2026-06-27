@@ -4,6 +4,7 @@ import type { ExecutionFilter } from '../../types/options.js'
 import type { ILogger } from '../../utils/logger.js'
 import { ApiError } from '../../errors/api-error.js'
 import { ProviderError } from '../../errors/provider-error.js'
+import { GuardError } from '../../errors/guard-error.js'
 import { withRetry, fetchWithTimeout } from '../../utils/retry.js'
 import type {
   N8nWorkflowResponse,
@@ -26,7 +27,19 @@ export class N8nApiClient {
     private readonly baseUrl: string,
     private readonly apiKey: string,
     private readonly logger: ILogger,
-  ) {}
+  ) {
+    if (!baseUrl || typeof baseUrl !== 'string') {
+      throw new GuardError('N8nApiClient: baseUrl must be a non-empty string')
+    }
+    try {
+      new URL(baseUrl)
+    } catch {
+      throw new GuardError(`N8nApiClient: baseUrl is not a valid URL: "${baseUrl}"`)
+    }
+    if (!apiKey || typeof apiKey !== 'string') {
+      throw new GuardError('N8nApiClient: apiKey must be a non-empty string')
+    }
+  }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const url = `${this.baseUrl.replace(/\/$/, '')}/api/v1${path}`

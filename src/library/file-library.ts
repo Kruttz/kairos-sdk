@@ -1,4 +1,4 @@
-import { readFile, writeFile, rename, mkdir, stat } from 'node:fs/promises'
+import { readFile, writeFile, rename, mkdir, stat, readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { N8nWorkflow } from '../types/workflow.js'
@@ -33,7 +33,12 @@ export function buildSearchCorpus(w: StoredWorkflow): string {
   return `${w.description} ${w.workflow.name} ${w.tags.join(' ')} ${nodeTokens.join(' ')}`
 }
 
-const MAX_LIBRARY_SIZE = 500
+const _rawSize = parseInt(process.env['KAIROS_LIBRARY_SIZE'] ?? '500', 10)
+const MAX_LIBRARY_SIZE = Number.isFinite(_rawSize) && _rawSize >= 10 ? _rawSize : 500
+
+function evictionScore(m: StoredWorkflowMeta): number {
+  return (m.deployCount ?? 0) * 3 + (m.timesRetrieved ?? 0) + (m.outcomeStats?.totalUses ?? 0)
+}
 
 /**
  * Internal per-file format: everything from StoredWorkflow except the workflow field,
@@ -118,6 +123,7 @@ export class FileLibrary implements IWorkflowLibrary {
       } catch {
         this.meta = []
       }
+      await this.scanForOrphansAndCleanup()
     } else {
       // Attempt to read old monolithic format
       try {
@@ -132,6 +138,36 @@ export class FileLibrary implements IWorkflowLibrary {
       }
       this.meta = []
       await mkdir(this.workflowsDir, { recursive: true })
+    }
+  }
+
+  private async scanForOrphansAndCleanup(): Promise<void> {
+    let entries: string[]
+    try {
+      entries = await readdir(this.workflowsDir)
+    } catch {
+      return
+    }
+
+    const indexedIds = new Set(this.meta.map((m) => m.id))
+    const orphanIds: string[] = []
+
+    for (const filename of entries) {
+      if (filename.endsWith('.tmp')) {
+        // Leftover from an interrupted atomic rename — safe to delete
+        await unlink(join(this.workflowsDir, filename)).catch(() => {})
+        continue
+      }
+      if (!filename.endsWith('.json')) continue
+      const id = filename.slice(0, -5)
+      if (!indexedIds.has(id)) {
+        orphanIds.push(id)
+      }
+    }
+
+    if (orphanIds.length > 0) {
+      // Log but do not delete — caller can decide what to do
+      console.warn(`[FileLibrary] Found ${orphanIds.length} orphaned workflow file(s) not in index: ${orphanIds.join(', ')}`)
     }
   }
 
@@ -258,6 +294,23 @@ export class FileLibrary implements IWorkflowLibrary {
   }
 
   async save(workflow: N8nWorkflow, metadata: WorkflowMetadataInput): Promise<string> {
+    // Dedup by exact description — update existing entry rather than creating a duplicate
+    const normalizedDesc = metadata.description.trim().toLowerCase()
+    const existing = this.meta.find((m) => m.description.trim().toLowerCase() === normalizedDesc)
+    if (existing) {
+      if (metadata.generationAttempts != null) {
+        existing.generationAttempts = metadata.generationAttempts
+      }
+      if (metadata.failurePatterns?.length) {
+        existing.failurePatterns = this.deduplicateFailurePatterns(metadata.failurePatterns)
+      }
+      if (metadata.tags?.length) {
+        existing.tags = [...new Set([...existing.tags, ...metadata.tags])]
+      }
+      await this.persist()
+      return existing.id
+    }
+
     const id = generateUUID()
 
     // Write workflow file first (data before index entry — crash-safe WAL pattern)
@@ -287,11 +340,11 @@ export class FileLibrary implements IWorkflowLibrary {
 
     this.meta.push(meta)
     if (this.meta.length > MAX_LIBRARY_SIZE) {
-      // Sort by deployCount desc but always keep the newly-added entry
+      // Evict by composite usage score ascending; always keep the newly-added entry
       this.meta.sort((a, b) => {
         if (a.id === id) return -1
         if (b.id === id) return 1
-        return (b.deployCount ?? 0) - (a.deployCount ?? 0)
+        return evictionScore(b) - evictionScore(a)
       })
       this.meta = this.meta.slice(0, MAX_LIBRARY_SIZE)
     }
@@ -409,7 +462,7 @@ export class FileLibrary implements IWorkflowLibrary {
       const external = onDisk.filter((m) => !ourIds.has(m.id))
       let merged = [...this.meta, ...external]
       if (merged.length > MAX_LIBRARY_SIZE) {
-        merged.sort((a, b) => (b.deployCount ?? 0) - (a.deployCount ?? 0))
+        merged.sort((a, b) => evictionScore(b) - evictionScore(a))
         merged = merged.slice(0, MAX_LIBRARY_SIZE)
       }
 

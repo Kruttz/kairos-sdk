@@ -49,14 +49,31 @@ export class PromptBuilder {
     matches: WorkflowMatch[],
     allIssues: string[],
     attempt: number,
+    failingRuleIds?: number[],
   ): string {
     const base = this.buildUserMessage(request, matches, this.resolveMode(matches))
+
+    let examplesSection = ''
+    if (failingRuleIds && failingRuleIds.length > 0) {
+      const uniqueRules = [...new Set(failingRuleIds)]
+      const exampleLines: string[] = []
+      for (const rule of uniqueRules) {
+        const ex = RULE_EXAMPLES[rule]
+        if (ex) {
+          exampleLines.push(`Rule ${rule}:\n  Bad:  ${ex.bad}\n  Good: ${ex.good}`)
+        }
+      }
+      if (exampleLines.length > 0) {
+        examplesSection = `\n\n## Concrete Fix Examples\n${exampleLines.join('\n\n')}`
+      }
+    }
+
     return `${base}
 
 IMPORTANT: A previous generation attempt (attempt ${attempt}) failed validation with these issues:
 ${allIssues.join('\n')}
 
-Fix ALL of the above issues in your new response. Do not repeat any of these mistakes.`
+Fix ALL of the above issues in your new response. Do not repeat any of these mistakes.${examplesSection}`
   }
 
   private resolveMode(matches: WorkflowMatch[]): 'direct' | 'reference' | 'scratch' {

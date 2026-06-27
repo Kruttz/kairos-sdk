@@ -94,7 +94,8 @@ export class WorkflowDesigner {
         const issueLines = lastErrors.map(
           (i) => `- [Rule ${i.rule}] ${i.message}${i.nodeId ? ` (node: ${i.nodeId})` : ''}`,
         )
-        userMessage = this.promptBuilder.buildCorrectionMessage(request, matches, issueLines, attempt - 1)
+        const failingRuleIds = lastErrors.map((i) => i.rule)
+        userMessage = this.promptBuilder.buildCorrectionMessage(request, matches, issueLines, attempt - 1, failingRuleIds)
         this.logger.debug(`WorkflowDesigner: correction attempt ${attempt}`, { issueCount: lastErrors.length })
       }
 
