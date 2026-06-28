@@ -423,6 +423,31 @@ export class N8nValidator {
     }
   }
 
+  // Rule 21 (WARN): webhook with responseMode="responseNode" must have respondToWebhook node
+  private checkRule21(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+
+    const webhooksNeedingResponse = w.nodes.filter((n) => {
+      if (!n.type.includes('webhook')) return false
+      const params = n.parameters as Record<string, unknown> | undefined
+      return params?.responseMode === 'responseNode'
+    })
+
+    if (webhooksNeedingResponse.length === 0) return
+
+    const hasRespondNode = w.nodes.some((n) => n.type.includes('respondToWebhook'))
+    if (!hasRespondNode) {
+      for (const wh of webhooksNeedingResponse) {
+        this.warn(
+          issues,
+          21,
+          `Webhook "${wh.name}" uses responseMode "responseNode" but no respondToWebhook node exists in the workflow`,
+          wh.id,
+        )
+      }
+    }
+  }
+
   // Rule 22 (WARN): check requiredParams from registry
   private checkRule22(w: N8nWorkflow, issues: ValidationIssue[]): void {
     if (!Array.isArray(w.nodes)) return
@@ -535,31 +560,6 @@ export class N8nValidator {
     }
     walk(params)
     return expressions
-  }
-
-  // Rule 21 (WARN): webhook with responseMode="responseNode" must have respondToWebhook node
-  private checkRule21(w: N8nWorkflow, issues: ValidationIssue[]): void {
-    if (!Array.isArray(w.nodes)) return
-
-    const webhooksNeedingResponse = w.nodes.filter((n) => {
-      if (!n.type.includes('webhook')) return false
-      const params = n.parameters as Record<string, unknown> | undefined
-      return params?.responseMode === 'responseNode'
-    })
-
-    if (webhooksNeedingResponse.length === 0) return
-
-    const hasRespondNode = w.nodes.some((n) => n.type.includes('respondToWebhook'))
-    if (!hasRespondNode) {
-      for (const wh of webhooksNeedingResponse) {
-        this.warn(
-          issues,
-          21,
-          `Webhook "${wh.name}" uses responseMode "responseNode" but no respondToWebhook node exists in the workflow`,
-          wh.id,
-        )
-      }
-    }
   }
 
   // Rule 27 (WARN): httpRequest URL is a placeholder

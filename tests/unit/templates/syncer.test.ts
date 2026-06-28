@@ -85,12 +85,17 @@ describe('TemplateSyncer', () => {
     vi.restoreAllMocks()
   })
 
-  function mockFetch(responses: Array<{ ok: boolean; body: unknown }>) {
+  function mockFetch(responses: Array<{ ok: boolean; body: unknown; status?: number; headers?: Record<string, string> }>) {
     let idx = 0
     fetchMock.mockImplementation(async () => {
       const r = responses[idx] ?? responses[responses.length - 1]!
       idx++
-      return { ok: r.ok, json: async () => r.body }
+      return {
+        ok: r.ok,
+        status: r.status ?? (r.ok ? 200 : 400),
+        json: async () => r.body,
+        headers: { get: (key: string) => r.headers?.[key] ?? null },
+      }
     })
   }
 
@@ -310,8 +315,23 @@ describe('TemplateSyncer', () => {
   })
 
   describe('network error handling', () => {
+    it('retries on 429 and succeeds after rate limit clears', async () => {
+      mockFetch([
+        { ok: false, status: 429, body: {}, headers: { 'Retry-After': '0' } }, // 429 on first search attempt
+        { ok: true, status: 200, body: makeSearchResponse([101]) },              // retry succeeds
+        { ok: true, status: 200, body: makeDetailResponse(101) },
+      ])
+
+      const library = makeMockLibrary()
+      const syncer = new TemplateSyncer(library, NOOP_LOGGER)
+      const result = await syncer.sync({ maxTemplates: 10 })
+
+      expect(result.saved).toBe(1)
+      expect(fetchMock).toHaveBeenCalledTimes(3) // 1 rate-limited + 1 retry search + 1 detail
+    })
+
     it('handles search page returning non-ok response gracefully', async () => {
-      fetchMock.mockResolvedValue({ ok: false, json: async () => ({}) })
+      fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}), headers: { get: () => null } })
 
       const library = makeMockLibrary()
       const syncer = new TemplateSyncer(library, NOOP_LOGGER)
@@ -324,7 +344,7 @@ describe('TemplateSyncer', () => {
     it('handles individual template detail fetch failure without stopping sync', async () => {
       mockFetch([
         { ok: true, body: makeSearchResponse([1, 2]) },
-        { ok: false, body: {} }, // template 1 fails
+        { ok: false, status: 500, body: {} }, // template 1 fails with 500 (not retryable)
         { ok: true, body: makeDetailResponse(2) },
       ])
 

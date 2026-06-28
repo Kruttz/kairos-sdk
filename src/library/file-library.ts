@@ -254,10 +254,12 @@ export class FileLibrary implements IWorkflowLibrary {
 
     const docCount = shells.length
     const idf = new Map<string, number>()
+    const idfCeiling = Math.log(docCount + 1) + 1  // max IDF when term appears in 0 docs
     const allTokens = new Set(queryTokens)
     for (const token of allTokens) {
       const docsWithToken = docTokenSets.filter((d) => d.has(token)).length
-      idf.set(token, Math.log((docCount + 1) / (docsWithToken + 1)) + 1)
+      const rawIdf = Math.log((docCount + 1) / (docsWithToken + 1)) + 1
+      idf.set(token, rawIdf / idfCeiling)  // normalize to [0, 1] regardless of corpus size
     }
 
     const scored = hybridScore(queryTokens, description, shells, docTokenArrays, idf)
@@ -294,10 +296,21 @@ export class FileLibrary implements IWorkflowLibrary {
   }
 
   async save(workflow: N8nWorkflow, metadata: WorkflowMetadataInput): Promise<string> {
-    // Dedup by exact description — update existing entry rather than creating a duplicate
+    // Prefer matching by n8nWorkflowId when redeploying — prevents duplicate library entries
+    const existingByN8nId = metadata.n8nWorkflowId
+      ? this.meta.find((m) => m.n8nWorkflowId === metadata.n8nWorkflowId)
+      : undefined
+
+    // Fall back to description dedup for newly saved workflows
     const normalizedDesc = metadata.description.trim().toLowerCase()
-    const existing = this.meta.find((m) => m.description.trim().toLowerCase() === normalizedDesc)
+    const existing = existingByN8nId
+      ?? this.meta.find((m) => m.description.trim().toLowerCase() === normalizedDesc)
+
     if (existing) {
+      existing.description = metadata.description  // update description on redeploy
+      existing.workflowName = workflow.name
+      existing.cachedNodeTypes = workflow.nodes.map((n) => n.type)
+      if (metadata.n8nWorkflowId) existing.n8nWorkflowId = metadata.n8nWorkflowId
       if (metadata.generationAttempts != null) {
         existing.generationAttempts = metadata.generationAttempts
       }
@@ -307,6 +320,7 @@ export class FileLibrary implements IWorkflowLibrary {
       if (metadata.tags?.length) {
         existing.tags = [...new Set([...existing.tags, ...metadata.tags])]
       }
+      await this.writeWorkflowFile(existing.id, workflow)
       await this.persist()
       return existing.id
     }
@@ -336,6 +350,7 @@ export class FileLibrary implements IWorkflowLibrary {
       ...(metadata.sourceId ? { sourceId: metadata.sourceId } : {}),
       ...(metadata.sourceUrl ? { sourceUrl: metadata.sourceUrl } : {}),
       ...(metadata.trustLevel ? { trustLevel: metadata.trustLevel } : {}),
+      ...(metadata.n8nWorkflowId ? { n8nWorkflowId: metadata.n8nWorkflowId } : {}),
     }
 
     this.meta.push(meta)
@@ -353,11 +368,12 @@ export class FileLibrary implements IWorkflowLibrary {
     return id
   }
 
-  async recordDeployment(id: string): Promise<void> {
+  async recordDeployment(id: string, n8nWorkflowId?: string): Promise<void> {
     const m = this.meta.find((m) => m.id === id)
     if (m) {
       m.deployCount++
       m.lastDeployedAt = new Date().toISOString()
+      if (n8nWorkflowId) m.n8nWorkflowId = n8nWorkflowId
       await this.persist()
     }
   }

@@ -129,6 +129,40 @@ describe('PromptBuilder', () => {
       expect(hasLibraryBlock).toBe(false)
     })
 
+    it('minimal profile: promotes relevant patterns by description keywords', () => {
+      // credential_injection pattern has lower composite score but should rank first
+      // when description mentions "auth"
+      const credPattern = {
+        rule: 99, failureCount: 2, confidence: 0.3,
+        pipelineStage: 'credential_injection', state: 'confirmed', trend: 'stable',
+        compositeScore: 0.05, // low score
+        exampleMessages: ['Credential missing'],
+        mitigation: 'Fix cred',
+        scoringFactors: { rawConfidence: 0.3, impact: 0.05, recency: 1, stickinessBoost: 0 },
+      }
+      const nodePatterns = Array.from({ length: 5 }, (_, i) => ({
+        rule: i + 1, failureCount: 10, confidence: 0.9,
+        pipelineStage: 'node_generation', state: 'confirmed', trend: 'stable',
+        compositeScore: 0.9 - i * 0.01, // higher scores
+        exampleMessages: [`Node rule ${i + 1} failed`],
+        mitigation: `Fix node ${i + 1}`,
+        scoringFactors: { rawConfidence: 0.9, impact: 0.5, recency: 1, stickinessBoost: 0 },
+      }))
+      const analysis = {
+        schemaVersion: 2, generatedAt: new Date().toISOString(), summary: {},
+        topFailureRules: [...nodePatterns, credPattern], failingCredentialTypes: [],
+        drift: { healthy: true, coveredRules: 26, totalRules: 26, alerts: [] },
+      }
+      writeFileSync(patternsPath, JSON.stringify(analysis))
+
+      const pb = new PromptBuilder(patternsPath, 'minimal')
+      // description only matches credential_injection keywords, not node_generation
+      const prompt = pb.build({ description: 'authenticate using OAuth credentials' }, [])
+      const warningBlock = prompt.system.find(b => b.text.includes('Known Failure Patterns'))
+      // credential pattern should appear despite low composite score because description matches its stage
+      expect(warningBlock?.text).toContain('Rule 99')
+    })
+
     it('minimal profile: caps active patterns at 3', () => {
       const patterns = []
       for (let i = 1; i <= 12; i++) {

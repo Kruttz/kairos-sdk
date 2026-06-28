@@ -5,7 +5,7 @@ import type { ILogger } from '../../utils/logger.js'
 import { ApiError } from '../../errors/api-error.js'
 import { ProviderError } from '../../errors/provider-error.js'
 import { GuardError } from '../../errors/guard-error.js'
-import { withRetry, fetchWithTimeout } from '../../utils/retry.js'
+import { withRetry, fetchWithTimeout, isTransientNetworkError } from '../../utils/retry.js'
 import type {
   N8nWorkflowResponse,
   N8nWorkflowListResponse,
@@ -18,6 +18,7 @@ import type {
 } from './types.js'
 
 const EXECUTION_LIMIT_CAP = 100
+const N8N_API_PAGE_SIZE = 250
 const REQUEST_TIMEOUT_MS = 30_000
 const RETRY_ATTEMPTS = 3
 const RETRY_DELAY_MS = 1000
@@ -46,8 +47,16 @@ export class N8nApiClient {
     this.logger.debug(`n8n ${method} ${path}`)
 
     const isSafe = method === 'GET'
+
+    // Non-safe (mutating) requests retry only on transient connection errors — these mean
+    // the request never reached the server, so re-sending is safe.
     if (!isSafe) {
-      return this.singleRequest<T>(url, method, path, body)
+      return withRetry(
+        () => this.singleRequest<T>(url, method, path, body),
+        2,
+        RETRY_DELAY_MS,
+        isTransientNetworkError,
+      )
     }
 
     return withRetry(
@@ -110,7 +119,7 @@ export class N8nApiClient {
 
   async listWorkflows(): Promise<WorkflowListItem[]> {
     const all: WorkflowListItem[] = []
-    let path = '/workflows?limit=250'
+    let path = `/workflows?limit=${N8N_API_PAGE_SIZE}`
 
     for (;;) {
       const response: N8nWorkflowListResponse = await this.request<N8nWorkflowListResponse>('GET', path)
@@ -125,7 +134,7 @@ export class N8nApiClient {
         })
       }
       if (!response.nextCursor) break
-      path = `/workflows?limit=250&cursor=${response.nextCursor}`
+      path = `/workflows?limit=${N8N_API_PAGE_SIZE}&cursor=${response.nextCursor}`
     }
 
     return all
@@ -163,7 +172,7 @@ export class N8nApiClient {
 
   async listTags(): Promise<Tag[]> {
     const all: Tag[] = []
-    let path = '/tags?limit=250'
+    let path = `/tags?limit=${N8N_API_PAGE_SIZE}`
 
     for (;;) {
       const response: N8nTagListResponse = await this.request<N8nTagListResponse>('GET', path)
@@ -171,7 +180,7 @@ export class N8nApiClient {
         all.push({ id: t.id, name: t.name })
       }
       if (!response.nextCursor) break
-      path = `/tags?limit=250&cursor=${response.nextCursor}`
+      path = `/tags?limit=${N8N_API_PAGE_SIZE}&cursor=${response.nextCursor}`
     }
 
     return all

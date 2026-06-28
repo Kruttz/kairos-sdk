@@ -79,13 +79,27 @@ export class TemplateSyncer {
     return progress
   }
 
+  private async fetchWithBackoff(url: string, maxRetries = 3): Promise<Response> {
+    let delayMs = DELAY_BETWEEN_FETCHES_MS
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const response = await fetch(url)
+      if (response.status !== 429 && response.status !== 503) return response
+      if (attempt === maxRetries) return response
+      const retryAfterHeader = response.headers.get('Retry-After')
+      const waitMs = retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : delayMs * Math.pow(2, attempt)
+      this.logger.warn(`HTTP ${response.status} from template API, retrying in ${waitMs}ms`, { url, attempt })
+      await new Promise((resolve) => setTimeout(resolve, waitMs))
+    }
+    return fetch(url)
+  }
+
   private async fetchTemplateIds(max: number, progress: SyncProgress): Promise<number[]> {
     const ids: number[] = []
     let page = 1
 
     while (ids.length < max) {
       const url = `${N8N_TEMPLATE_API}/search?page=${page}&rows=${PAGE_SIZE}`
-      const response = await fetch(url)
+      const response = await this.fetchWithBackoff(url)
       if (!response.ok) break
 
       const data = (await response.json()) as TemplateSearchResponse
@@ -111,7 +125,7 @@ export class TemplateSyncer {
 
   private async processTemplate(id: number, progress: SyncProgress): Promise<void> {
     const url = `${N8N_TEMPLATE_API}/workflows/${id}`
-    const response = await fetch(url)
+    const response = await this.fetchWithBackoff(url)
     if (!response.ok) return
 
     const data = (await response.json()) as TemplateDetailResponse

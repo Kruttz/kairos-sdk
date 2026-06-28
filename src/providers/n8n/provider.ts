@@ -3,6 +3,7 @@ import type { DeployResult, WorkflowListItem, ExecutionSummary, ExecutionDetail,
 import type { DeleteOptions, ExecutionFilter } from '../../types/options.js'
 import type { IProvider } from '../types.js'
 import { GuardError } from '../../errors/guard-error.js'
+import { ProviderError } from '../../errors/provider-error.js'
 import { N8nApiClient } from './api-client.js'
 import { N8nFieldStripper } from './stripper.js'
 
@@ -157,6 +158,6 @@ export class N8nProvider implements IProvider {
       if (remaining <= 0) break
       await new Promise<void>((resolve) => setTimeout(resolve, Math.min(SMOKE_TEST_POLL_INTERVAL_MS, remaining)))
     }
-    throw new Error(`Smoke test: execution ${executionId} did not complete within ${SMOKE_TEST_TIMEOUT_MS}ms`)
+    throw new ProviderError(`Smoke test: execution ${executionId} did not complete within ${SMOKE_TEST_TIMEOUT_MS}ms`)
   }
 }

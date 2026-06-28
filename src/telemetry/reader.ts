@@ -30,7 +30,7 @@ export class TelemetryReader {
     const buildSessions = new Set(
       events
         .filter((e) => e.eventType === 'build_complete')
-        .map((e) => e.sessionId),
+        .map((e) => e.runId ?? e.sessionId),
     )
     const MIN_BUILDS_FOR_RATES = 3
     if (buildSessions.size < MIN_BUILDS_FOR_RATES) return []
@@ -39,13 +39,14 @@ export class TelemetryReader {
 
     for (const event of events) {
       if (event.eventType !== 'generation_attempt') continue
-      if (!buildSessions.has(event.sessionId)) continue
+      const eventKey = event.runId ?? event.sessionId
+      if (!buildSessions.has(eventKey)) continue
       const data = event.data as { validationPassed?: boolean; issues?: Array<{ rule: number; message: string }> }
       if (data.validationPassed || !data.issues) continue
 
       for (const issue of data.issues) {
         const entry = ruleSessions.get(issue.rule) ?? { sessions: new Set(), messages: new Map() }
-        entry.sessions.add(event.sessionId)
+        entry.sessions.add(eventKey)
         entry.messages.set(issue.message, (entry.messages.get(issue.message) ?? 0) + 1)
         ruleSessions.set(issue.rule, entry)
       }

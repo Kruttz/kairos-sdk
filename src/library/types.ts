@@ -24,6 +24,7 @@ export interface WorkflowMetadataInput {
   sourceId?: string
   sourceUrl?: string
   trustLevel?: TrustLevel
+  n8nWorkflowId?: string  // set when saving a workflow already deployed to n8n
 }
 
 export interface OutcomeData {
@@ -63,6 +64,7 @@ export interface StoredWorkflow {
   timesUsedAsDirect?: number
   timesUsedAsReference?: number
   outcomeStats?: OutcomeStats
+  n8nWorkflowId?: string  // n8n instance workflowId if this was deployed
 }
 
 export interface WorkflowMatch {
@@ -85,7 +87,7 @@ export interface IWorkflowLibrary {
   initialize(): Promise<void>
   search(description: string, options?: SearchOptions): Promise<WorkflowMatch[]>
   save(workflow: N8nWorkflow, metadata: WorkflowMetadataInput): Promise<string>
-  recordDeployment(id: string): Promise<void>
+  recordDeployment(id: string, n8nWorkflowId?: string): Promise<void>
   recordOutcome(id: string, outcome: OutcomeData): Promise<void>
   get(id: string): Promise<StoredWorkflow | null>
   list(filters?: LibraryFilters): Promise<StoredWorkflow[]>

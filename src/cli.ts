@@ -237,13 +237,7 @@ async function handleSyncTemplates(flags: Record<string, string | boolean>): Pro
   const maxRaw = typeof flags['max'] === 'string' ? parseInt(flags['max'], 10) : NaN
   const max = Number.isNaN(maxRaw) ? 500 : maxRaw
   const library = new FileLibrary()
-  const logger = {
-    debug: () => {},
-    info: (msg: string, meta?: Record<string, unknown>) => console.error(meta ? `${msg} ${JSON.stringify(meta)}` : msg),
-    warn: (msg: string, meta?: Record<string, unknown>) => console.error(meta ? `[warn] ${msg} ${JSON.stringify(meta)}` : `[warn] ${msg}`),
-    error: (msg: string, meta?: Record<string, unknown>) => console.error(meta ? `[error] ${msg} ${JSON.stringify(meta)}` : `[error] ${msg}`),
-  }
-  const syncer = new TemplateSyncer(library, logger)
+  const syncer = new TemplateSyncer(library, CLI_LOGGER)
 
   console.error(`Syncing up to ${max} templates from n8n community library...`)
 

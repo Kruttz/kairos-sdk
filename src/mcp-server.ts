@@ -21,6 +21,7 @@ import { PatternAnalyzer } from './telemetry/pattern-analyzer.js'
 import { NodeSyncer, type SyncResult } from './validation/node-syncer.js'
 import { TelemetryCollector } from './telemetry/collector.js'
 import { nullLogger } from './utils/logger.js'
+import { GuardError } from './errors/guard-error.js'
 import { generateUUID } from './utils/uuid.js'
 import { inferWorkflowType } from './utils/workflow-type.js'
 import type { N8nWorkflow } from './types/workflow.js'
@@ -38,6 +39,7 @@ let _validator = new N8nValidator()
 function getValidator(): N8nValidator { return _validator }
 const nodeSyncer = new NodeSyncer()
 let lastSync: SyncResult | null = null
+const AUTO_SYNC_TIMEOUT_MS = 5_000  // cap how long kairos_prompt waits for n8n node sync
 const stripper = new N8nFieldStripper()
 const promptBuilder = new PromptBuilder(getMcpPatternsPath())
 
@@ -91,11 +93,28 @@ function isAllowed(action: 'deploy' | 'activate' | 'delete'): boolean {
   return process.env[key] === 'true'
 }
 
+type McpTextContent = { type: 'text'; text: string }
+type McpToolResult = { content: McpTextContent[]; isError?: true }
+
+function mcpText(text: string): McpToolResult { return { content: [{ type: 'text', text }] } }
+function mcpError(text: string): McpToolResult { return { content: [{ type: 'text', text }], isError: true } }
+
+/**
+ * Returns an error result if KAIROS_MCP_SECRET is set and the provided secret
+ * doesn't match. Returns null if auth passes (no secret configured, or correct secret).
+ */
+function checkMcpAuth(provided: string | undefined): McpToolResult | null {
+  const expected = process.env['KAIROS_MCP_SECRET']
+  if (!expected) return null
+  if (provided === expected) return null
+  return mcpError(JSON.stringify({ error: 'Unauthorized: missing or incorrect kairos_secret' }))
+}
+
 function getApiClient(): N8nApiClient {
   const baseUrl = process.env['N8N_BASE_URL']
   const apiKey = process.env['N8N_API_KEY']
   if (!baseUrl || !apiKey) {
-    throw new Error('N8N_BASE_URL and N8N_API_KEY environment variables are required for n8n operations')
+    throw new GuardError('N8N_BASE_URL and N8N_API_KEY environment variables are required for n8n operations')
   }
   return new N8nApiClient(baseUrl, apiKey, nullLogger)
 }
@@ -139,7 +158,7 @@ server.tool(
     if (!baseUrl || !apiKey) {
       return {
         content: [{
-          type: 'text' as const,
+          type: 'text',
           text: JSON.stringify({ error: 'N8N_BASE_URL and N8N_API_KEY are required. Kairos needs to sync your n8n instance\'s node types to generate accurate workflows.' }),
         }],
         isError: true,
@@ -149,11 +168,19 @@ server.tool(
     const runId = generateUUID()
     const workflowType = inferWorkflowType(description)
 
+    // Start sync in background — race against timeout so slow n8n instances don't block the prompt
+    const syncPromise = autoSync()
+    const syncTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), AUTO_SYNC_TIMEOUT_MS))
+
     await library.initialize()
-    const syncResult = await autoSync()
-    const matches = await library.search(description)
-    const telemetryReader = getTelemetryReader()
-    const failureRates = await telemetryReader?.getFailureRates() ?? []
+    const [syncResult, matches, failureRates] = await Promise.all([
+      Promise.race([syncPromise, syncTimeout]),
+      library.search(description),
+      (async () => {
+        const reader = getTelemetryReader()
+        return reader ? reader.getFailureRates() : []
+      })(),
+    ])
 
     const request = { description, ...(name ? { name } : {}) }
     const built = promptBuilder.build(request, matches, failureRates, syncResult?.catalogText)
@@ -220,7 +247,7 @@ server.tool(
     } catch (e) {
       return {
         content: [{
-          type: 'text' as const,
+          type: 'text',
           text: JSON.stringify({
             valid: false,
             error: `Invalid JSON: ${e instanceof Error ? e.message : String(e)}`,
@@ -283,12 +310,16 @@ server.tool(
     workflow: z.string().describe('The validated workflow JSON string to deploy'),
     activate: z.boolean().default(false).describe('Activate the workflow immediately after deployment'),
     kairos_run_id: z.string().optional().describe('Run ID from kairos_prompt — enables telemetry correlation'),
+    kairos_secret: z.string().optional().describe('Required when KAIROS_MCP_SECRET env var is set'),
   },
-  async ({ workflow: workflowStr, activate, kairos_run_id }) => {
+  async ({ workflow: workflowStr, activate, kairos_run_id, kairos_secret }) => {
+    const authError = checkMcpAuth(kairos_secret)
+    if (authError) return authError
+
     if (!isAllowed('deploy')) {
       return {
         content: [{
-          type: 'text' as const,
+          type: 'text',
           text: JSON.stringify({ error: 'Deploy is disabled. Set KAIROS_MCP_ALLOW_DEPLOY=true to enable.' }),
         }],
         isError: true,
@@ -301,7 +332,7 @@ server.tool(
     } catch (e) {
       return {
         content: [{
-          type: 'text' as const,
+          type: 'text',
           text: JSON.stringify({ error: `Invalid JSON: ${e instanceof Error ? e.message : String(e)}` }),
         }],
       }
@@ -312,7 +343,7 @@ server.tool(
     if (errors.length > 0) {
       return {
         content: [{
-          type: 'text' as const,
+          type: 'text',
           text: JSON.stringify({
             error: 'Workflow has validation errors — fix them before deploying',
             errors: errors.map(i => ({ rule: i.rule, message: i.message })),
@@ -329,7 +360,7 @@ server.tool(
       if (!isAllowed('activate')) {
         return {
           content: [{
-            type: 'text' as const,
+            type: 'text',
             text: JSON.stringify({
               workflowId: response.id,
               name: response.name,
@@ -432,7 +463,7 @@ server.tool(
     if (!baseUrl || !apiKey) {
       return {
         content: [{
-          type: 'text' as const,
+          type: 'text',
           text: JSON.stringify({ error: 'N8N_BASE_URL and N8N_API_KEY are required for sync.' }),
         }],
         isError: true,
@@ -444,7 +475,7 @@ server.tool(
     if (!result) {
       return {
         content: [{
-          type: 'text' as const,
+          type: 'text',
           text: JSON.stringify({ error: 'Failed to fetch node types from n8n. Check your credentials and that your instance is running.' }),
         }],
         isError: true,
@@ -537,7 +568,7 @@ server.tool(
     if (!isAllowed('activate')) {
       return {
         content: [{
-          type: 'text' as const,
+          type: 'text',
           text: JSON.stringify({ error: 'Activate is disabled. Set KAIROS_MCP_ALLOW_ACTIVATE=true to enable.' }),
         }],
         isError: true,
@@ -580,12 +611,16 @@ server.tool(
   'Delete a workflow from n8n. This is irreversible.',
   {
     workflow_id: z.string().describe('The n8n workflow ID to delete'),
+    kairos_secret: z.string().optional().describe('Required when KAIROS_MCP_SECRET env var is set'),
   },
-  async ({ workflow_id }) => {
+  async ({ workflow_id, kairos_secret }) => {
+    const authError = checkMcpAuth(kairos_secret)
+    if (authError) return authError
+
     if (!isAllowed('delete')) {
       return {
         content: [{
-          type: 'text' as const,
+          type: 'text',
           text: JSON.stringify({ error: 'Delete is disabled. Set KAIROS_MCP_ALLOW_DELETE=true to enable.' }),
         }],
         isError: true,

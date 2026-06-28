@@ -104,6 +104,9 @@ export function clusterWorkflows(workflows: StoredWorkflow[]): WorkflowCluster[]
   return clusters.sort((a, b) => b.members.length - a.members.length)
 }
 
+const NOVELTY_BOOST = 0.05      // reward for being first representative of a cluster
+const NOVELTY_PENALTY = 0.03    // penalty for being a duplicate cluster in the top results
+
 export function rerank(
   candidates: Array<{ workflow: StoredWorkflow; score: number }>,
   clusters: WorkflowCluster[],
@@ -115,7 +118,8 @@ export function rerank(
     }
   }
 
-  return candidates
+  // Pass 1: apply outcome/failure boosts, sort by score
+  const pass1 = candidates
     .map((c) => {
       const cluster = clusterMap.get(c.workflow.id)
       let boost = 0
@@ -131,8 +135,31 @@ export function rerank(
       return {
         workflow: c.workflow,
         score: Math.max(0, Math.min(1, c.score + boost)),
-        ...(cluster ? { clusterPattern: cluster.pattern } : {}),
+        cluster,
       }
     })
     .sort((a, b) => b.score - a.score)
+
+  // Pass 2: novelty boost — reward the first representative of each cluster pattern,
+  // penalize subsequent results from the same cluster to promote diversity
+  const seenFingerprints = new Set<string>()
+  return pass1.map((c) => {
+    const fpKey = c.cluster ? fingerprintKey(c.cluster.fingerprint) : null
+    let noveltyAdjust = 0
+
+    if (fpKey !== null) {
+      if (!seenFingerprints.has(fpKey)) {
+        seenFingerprints.add(fpKey)
+        noveltyAdjust = NOVELTY_BOOST
+      } else {
+        noveltyAdjust = -NOVELTY_PENALTY
+      }
+    }
+
+    return {
+      workflow: c.workflow,
+      score: Math.max(0, Math.min(1, c.score + noveltyAdjust)),
+      ...(c.cluster ? { clusterPattern: c.cluster.pattern } : {}),
+    }
+  }).sort((a, b) => b.score - a.score)
 }

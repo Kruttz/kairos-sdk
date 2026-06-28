@@ -39,7 +39,7 @@ export class PromptBuilder {
 
   build(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string): BuiltPrompt {
     const mode = this.resolveMode(matches)
-    const system = this.buildSystem(matches, mode, globalFailureRates, dynamicCatalog)
+    const system = this.buildSystem(matches, mode, globalFailureRates, dynamicCatalog, request.description)
     const userMessage = this.buildUserMessage(request, matches, mode)
     return { system, userMessage, mode, matches }
   }
@@ -83,7 +83,7 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
     return scoreToMode(top.score)
   }
 
-  private buildSystem(matches: WorkflowMatch[], mode: 'direct' | 'reference' | 'scratch', globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string): SystemPromptBlock[] {
+  private buildSystem(matches: WorkflowMatch[], mode: 'direct' | 'reference' | 'scratch', globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string, description?: string): SystemPromptBlock[] {
     let basePrompt = SYSTEM_PROMPT_V1
     if (dynamicCatalog) {
       basePrompt = basePrompt.replace(
@@ -147,7 +147,7 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
       }
     }
 
-    const warnings = this.buildFailureWarnings(matches, globalFailureRates)
+    const warnings = this.buildFailureWarnings(matches, globalFailureRates, description)
     if (warnings) {
       blocks.push({ type: 'text', text: warnings })
     }
@@ -179,7 +179,7 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
     return patterns.map(p => p.rule)
   }
 
-  private getActivePatterns(maxCount = 10): Pattern[] {
+  private getActivePatterns(maxCount = 10, description?: string): Pattern[] {
     const all = this.loadPatterns()
       .filter(p => p.state !== 'resolved' && p.confidence > 0)
 
@@ -187,11 +187,37 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
     const confirmed = all.filter(p => !p.regressed && p.state === 'confirmed').sort((a, b) => b.compositeScore - a.compositeScore)
     const drafts = all.filter(p => !p.regressed && p.state !== 'confirmed').sort((a, b) => b.compositeScore - a.compositeScore)
 
-    return [...regressed, ...confirmed, ...drafts].slice(0, maxCount)
+    const ordered = [...regressed, ...confirmed, ...drafts]
+
+    if (this.profile === 'minimal' && description) {
+      return this.rankByRelevance(ordered, description).slice(0, maxCount)
+    }
+
+    return ordered.slice(0, maxCount)
   }
 
-  private buildFailureWarnings(matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[]): string | null {
-    const richPatterns = this.getActivePatterns(this.resolveMaxPatterns())
+  private rankByRelevance(patterns: Pattern[], description: string): Pattern[] {
+    const lower = description.toLowerCase()
+    const STAGE_KEYWORDS: Record<string, string[]> = {
+      credential_injection: ['credential', 'auth', 'api key', 'token', 'oauth', 'smtp', 'imap', 'password', 'secret'],
+      connection_wiring: ['connect', 'link', 'wire', 'chain', 'merge', 'branch', 'join'],
+      expression_syntax: ['expression', 'variable', 'json', 'field', 'data', '$json', 'item'],
+      workflow_structure: ['trigger', 'webhook', 'schedule', 'structure', 'workflow'],
+      node_generation: ['node', 'generate', 'create', 'build', 'send', 'fetch', 'email', 'slack', 'http'],
+    }
+
+    return patterns
+      .map(p => {
+        const keywords = STAGE_KEYWORDS[p.pipelineStage] ?? []
+        const relevanceBoost = keywords.some(kw => lower.includes(kw)) ? 1 : 0
+        return { pattern: p, sort: relevanceBoost * 10 + p.compositeScore }
+      })
+      .sort((a, b) => b.sort - a.sort)
+      .map(x => x.pattern)
+  }
+
+  private buildFailureWarnings(matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[], description?: string): string | null {
+    const richPatterns = this.getActivePatterns(this.resolveMaxPatterns(), description)
     this._lastActivePatterns = richPatterns
 
     if (richPatterns.length > 0) {

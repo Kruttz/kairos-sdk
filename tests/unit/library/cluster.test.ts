@@ -94,4 +94,28 @@ describe('rerank', () => {
     const reranked = rerank([{ workflow: w, score: 0.5 }], clusters)
     expect(reranked[0]!.clusterPattern).toBeDefined()
   })
+
+  it('applies novelty boost to first representative of each cluster', () => {
+    // Two candidates from same cluster (same fingerprint) and one from different cluster
+    const slackA = makeStored('SlackA', ['webhook', 'slack'])
+    const slackB = makeStored('SlackB', ['webhook', 'slack'])
+    const emailC = makeStored('EmailC', ['scheduleTrigger', 'gmail'])
+
+    const clusters = clusterWorkflows([slackA, slackB, emailC])
+
+    // SlackA and SlackB have same score, EmailC has lower initial score
+    // After novelty boost, emailC (novel cluster) should rank above slackB (duplicate cluster)
+    const candidates = [
+      { workflow: slackA, score: 0.8 },
+      { workflow: slackB, score: 0.79 },
+      { workflow: emailC, score: 0.77 },
+    ]
+
+    const reranked = rerank(candidates, clusters)
+    // slackA is first in its cluster (gets novelty boost), emailC is first in its cluster (gets boost)
+    // slackB is second in its cluster (gets penalty) — so emailC should rank above slackB
+    const emailCRank = reranked.findIndex(r => r.workflow.id === emailC.id)
+    const slackBRank = reranked.findIndex(r => r.workflow.id === slackB.id)
+    expect(emailCRank).toBeLessThan(slackBRank)
+  })
 })

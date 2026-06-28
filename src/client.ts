@@ -210,7 +210,7 @@ export class Kairos {
     // Log the workflow ID immediately — if any post-deploy step fails, this ID
     // lets the user manually locate and clean up the orphaned workflow in n8n.
     this.logger.info('Workflow deployed to n8n', { workflowId: deployed.workflowId, name: deployed.name })
-    this.recordDeploy()
+    this.recordDeploy(deployed.workflowId)
 
     if (options?.activate) {
       await provider.activate(deployed.workflowId)
@@ -318,7 +318,7 @@ export class Kairos {
     const deployed = await provider.update(id, designResult.workflow)
     this.logger.info('Workflow updated in n8n', { workflowId: deployed.workflowId, name: deployed.name })
 
-    this.saveToLibrary(designResult.workflow, description, designResult, matches)
+    this.saveToLibrary(designResult.workflow, description, designResult, matches, deployed.workflowId)
     this.recordDeploy()
 
     const totalTokensInput = designResult.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0)
@@ -384,11 +384,11 @@ export class Kairos {
     }
   }
 
-  private recordDeploy(): void {
+  private recordDeploy(n8nWorkflowId?: string): void {
     this.saveQueue = this.saveQueue
       .then(async (savedId) => {
         if (savedId) {
-          await this.library.recordDeployment(savedId)
+          await this.library.recordDeployment(savedId, n8nWorkflowId)
         }
         return savedId
       })
@@ -403,6 +403,7 @@ export class Kairos {
     description: string,
     designResult: DesignResult,
     matches: WorkflowMatch[],
+    n8nWorkflowId?: string,
   ): void {
     const failedAttempts = designResult.attemptMetadata.filter((m) => !m.validationPassed)
     const failurePatterns = failedAttempts.flatMap((m) =>
@@ -431,6 +432,7 @@ export class Kairos {
     if (matches.length > 0) metadata.sourceWorkflowIds = matches.map((m) => m.workflow.id)
     if (topMatch) metadata.topMatchScore = topMatch.score
     if (designResult.credentialsNeeded.length > 0) metadata.credentialsNeeded = designResult.credentialsNeeded
+    if (n8nWorkflowId) metadata.n8nWorkflowId = n8nWorkflowId
 
     const firstTryPass = designResult.attemptMetadata.length > 0
       && designResult.attemptMetadata[0]!.validationPassed

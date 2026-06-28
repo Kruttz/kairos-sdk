@@ -263,6 +263,36 @@ describe('FileLibrary', () => {
     expect(names).toEqual(['ListA', 'ListB'])
   })
 
+  // ── D4: n8nWorkflowId dedup on redeploy ─────────────────────────────────
+
+  it('updates existing entry when saved with same n8nWorkflowId (redeploy dedup)', async () => {
+    const id1 = await lib.save(makeWorkflow('SlackV1'), {
+      description: 'send slack message',
+      n8nWorkflowId: 'n8n-wf-42',
+    })
+
+    // Simulate a redeploy — same n8nWorkflowId, new description + workflow
+    const id2 = await lib.save(makeWorkflow('SlackV2'), {
+      description: 'send slack notification with attachment',
+      n8nWorkflowId: 'n8n-wf-42',
+    })
+
+    expect(id1).toBe(id2) // same library entry updated, not duplicated
+    const all = await lib.list()
+    expect(all).toHaveLength(1) // no duplicate
+    expect(all[0]!.workflow.name).toBe('SlackV2') // workflow file updated
+    expect(all[0]!.description).toBe('send slack notification with attachment') // description updated
+  })
+
+  it('recordDeployment sets n8nWorkflowId on the library entry', async () => {
+    const id = await lib.save(makeWorkflow('Deployed'), { description: 'deployed workflow' })
+    await lib.recordDeployment(id, 'n8n-wf-99')
+    await lib.drain()
+    const stored = await lib.get(id)
+    expect(stored!.n8nWorkflowId).toBe('n8n-wf-99')
+    expect(stored!.deployCount).toBe(1)
+  })
+
   // ── Cross-process file locking (C3) ─────────────────────────────────────
 
   it('cleans up lock file after a write completes', async () => {

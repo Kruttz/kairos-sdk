@@ -96,6 +96,7 @@ export class PatternAnalyzer {
   private readonly telemetryDir: string
   private readonly outputDir: string
   private _cachedEvents: Awaited<ReturnType<typeof readTelemetryEvents>> | null = null
+  private _cachedPreviousPatterns: Pattern[] | null = null
 
   constructor(telemetryDir?: string) {
     const defaultDir = join(homedir(), '.kairos', 'telemetry')
@@ -106,16 +107,19 @@ export class PatternAnalyzer {
   }
 
   private async loadPreviousPatterns(): Promise<Pattern[]> {
+    if (this._cachedPreviousPatterns !== null) return this._cachedPreviousPatterns
     try {
       const raw = await fsReadFile(join(this.outputDir, 'patterns.json'), 'utf-8')
       const prev = JSON.parse(raw) as PatternAnalysis & { schemaVersion?: number }
       const version = prev.schemaVersion ?? 0
       const patterns = prev.topFailureRules ?? []
-      if (version === PATTERN_SCHEMA_VERSION) return patterns
-      return this.migratePatterns(patterns, version)
+      this._cachedPreviousPatterns = version === PATTERN_SCHEMA_VERSION
+        ? patterns
+        : this.migratePatterns(patterns, version)
     } catch {
-      return []
+      this._cachedPreviousPatterns = []
     }
+    return this._cachedPreviousPatterns
   }
 
   private migratePatterns(patterns: Pattern[], fromVersion: number): Pattern[] {
@@ -483,6 +487,7 @@ export class PatternAnalyzer {
     const tmpPath = `${outputPath}.tmp`
     await writeFile(tmpPath, JSON.stringify(analysis, null, 2), 'utf-8')
     await rename(tmpPath, outputPath)
+    this._cachedPreviousPatterns = null  // invalidate so next loadPreviousPatterns reads fresh file
 
     const historySummary = {
       timestamp: analysis.generatedAt,
@@ -544,7 +549,7 @@ export class PatternAnalyzer {
       ))
 
       return {
-        sessionId: bc.sessionId,
+        sessionId: bc.runId ?? bc.sessionId,
         date: bc.fileDate,
         description: data.description ?? '',
         workflowType: data.workflowType ?? null,
