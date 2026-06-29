@@ -69,6 +69,7 @@ interface McpBuildSession {
   validateAttempts: number
   warnedRules: number[]
   workflowType: string | null
+  matchCount: number
 }
 const mcpSessions = new Map<string, McpBuildSession>()
 const SESSION_TTL_MS = 60 * 60 * 1000  // 1 hour: abandon sessions not completed by deploy
@@ -186,6 +187,7 @@ server.tool(
         validateAttempts: 0,
         warnedRules: promptBuilder.getWarnedRules(),
         workflowType,
+        matchCount: matches.length,
       })
       await mcpTelemetry.emit('build_start', { description, model: 'mcp-decomposed', dryRun: false }, runId)
     }
@@ -277,10 +279,11 @@ server.tool(
   {
     workflow: z.string().describe('The validated workflow JSON string to deploy'),
     activate: z.boolean().default(false).describe('Activate the workflow immediately after deployment'),
+    description: z.string().optional().describe('The original user intent / description for this workflow — used to improve library search quality over time'),
     kairos_run_id: z.string().optional().describe('Run ID from kairos_prompt — enables telemetry correlation'),
     kairos_secret: z.string().optional().describe('Required when KAIROS_MCP_SECRET env var is set'),
   },
-  async ({ workflow: workflowStr, activate, kairos_run_id, kairos_secret }) => {
+  async ({ workflow: workflowStr, activate, description: userDescription, kairos_run_id, kairos_secret }) => {
     const authError = checkMcpAuth(kairos_secret)
     if (authError) return authError
 
@@ -331,8 +334,8 @@ server.tool(
     // Save to library (n8nWorkflowId enables dedup on future redeployment)
     await library.initialize()
     await library.save(parsed, {
-      description: session?.description ?? parsed.name,
-      generationMode: 'scratch',
+      description: session?.description ?? userDescription ?? parsed.name,
+      generationMode: session && session.matchCount > 0 ? 'reference' : 'scratch',
       generationAttempts: session?.validateAttempts ?? 1,
       n8nWorkflowId: response.id,
     })
@@ -371,10 +374,11 @@ server.tool(
   {
     workflow_id: z.string().describe('The n8n workflow ID to replace'),
     workflow: z.string().describe('The validated workflow JSON string'),
+    description: z.string().optional().describe('The original user intent / description for this workflow — used to improve library search quality over time'),
     kairos_run_id: z.string().optional().describe('Run ID from kairos_prompt — enables telemetry correlation'),
     kairos_secret: z.string().optional().describe('Required when KAIROS_MCP_SECRET env var is set'),
   },
-  async ({ workflow_id, workflow: workflowStr, kairos_run_id, kairos_secret }) => {
+  async ({ workflow_id, workflow: workflowStr, description: userDescription, kairos_run_id, kairos_secret }) => {
     const authError = checkMcpAuth(kairos_secret)
     if (authError) return authError
 
@@ -406,8 +410,8 @@ server.tool(
     // Save to library — D4 dedup updates the existing entry rather than creating a duplicate
     await library.initialize()
     await library.save(parsed, {
-      description: session?.description ?? parsed.name,
-      generationMode: 'scratch',
+      description: session?.description ?? userDescription ?? parsed.name,
+      generationMode: session && session.matchCount > 0 ? 'reference' : 'scratch',
       generationAttempts: session?.validateAttempts ?? 1,
       n8nWorkflowId: workflow_id,
     })
