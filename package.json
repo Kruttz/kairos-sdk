@@ -38,7 +38,9 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
-    "lint:fix": "eslint src --ext .ts --fix"
+    "lint:fix": "eslint src --ext .ts --fix",
+    "benchmark": "tsx scripts/benchmark.ts",
+    "benchmark:baseline": "tsx scripts/benchmark.ts --no-library --output benchmark-results.json"
   },
   "keywords": [
     "n8n",
