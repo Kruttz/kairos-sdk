@@ -95,7 +95,7 @@ describe('Kairos MCP Server', () => {
     expect(names).toHaveLength(15)
   })
 
-  it('kairos_prompt requires n8n credentials', async () => {
+  it('kairos_prompt returns a prompt even without n8n credentials (graceful fallback)', async () => {
     client.send({
       jsonrpc: '2.0', id: 2, method: 'tools/call',
       params: {
@@ -107,8 +107,12 @@ describe('Kairos MCP Server', () => {
     const result = resp['result'] as { content: Array<{ text: string }>; isError?: boolean }
     const content = JSON.parse(result.content[0].text)
 
-    expect(result.isError).toBe(true)
-    expect(content.error).toContain('N8N_BASE_URL')
+    // Should succeed (not an error) and return a usable prompt
+    expect(result.isError).toBeFalsy()
+    expect(content).toHaveProperty('systemPrompt')
+    expect(content).toHaveProperty('kairos_run_id')
+    // Should warn that credentials are missing
+    expect(content.syncWarning).toContain('N8N_BASE_URL')
   })
 
   it('kairos_validate passes a valid workflow', async () => {

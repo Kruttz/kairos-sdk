@@ -154,14 +154,9 @@ server.tool(
   async ({ description, name }) => {
     evictStaleSessions()
 
-    const baseUrl = process.env['N8N_BASE_URL']
-    const apiKey = process.env['N8N_API_KEY']
-    if (!baseUrl || !apiKey) {
-      return mcpError(JSON.stringify({ error: 'N8N_BASE_URL and N8N_API_KEY are required. Kairos needs to sync your n8n instance\'s node types to generate accurate workflows.' }))
-    }
-
     const runId = generateUUID()
     const workflowType = inferWorkflowType(description)
+    const hasN8nCreds = !!(process.env['N8N_BASE_URL'] && process.env['N8N_API_KEY'])
 
     // Start sync in background — race against timeout so slow n8n instances don't block the prompt
     const syncPromise = autoSync()
@@ -201,7 +196,11 @@ server.tool(
           topMatchScore: matches[0]?.score ?? null,
           nodeCatalog: syncResult ? 'synced' : 'static',
           nodeCount: syncResult?.nodeCount ?? null,
-          ...(syncResult ? {} : { syncWarning: 'Could not sync node types from your n8n instance. Using static fallback catalog — generated workflows may not match your exact n8n setup.' }),
+          ...(syncResult ? {} : {
+            syncWarning: hasN8nCreds
+              ? 'Could not sync node types from your n8n instance. Using static fallback catalog — generated workflows may not match your exact n8n setup.'
+              : 'N8N_BASE_URL and N8N_API_KEY are not set. Using static fallback catalog — node types may not match your n8n instance. Set these env vars to enable accurate generation and deployment.',
+          }),
           systemPrompt: systemText,
           userMessage: built.userMessage,
           outputFormat: {
