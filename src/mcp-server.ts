@@ -10,6 +10,8 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { createServer } from 'node:http'
 import { z } from 'zod'
 import { FileLibrary } from './library/file-library.js'
 import { N8nValidator } from './validation/validator.js'
@@ -719,8 +721,31 @@ async function main() {
       '[kairos-mcp] WARNING: ANTHROPIC_API_KEY is not set — kairos_prompt will fail. Set it before using workflow generation tools.\n',
     )
   }
-  const transport = new StdioServerTransport()
-  await server.connect(transport)
+
+  const useHttp = process.argv.includes('--http')
+
+  if (useHttp) {
+    const port = parseInt(process.env['KAIROS_MCP_PORT'] ?? '3000', 10)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const transport = new StreamableHTTPServerTransport() as any
+    await server.connect(transport)
+
+    const httpServer = createServer(async (req, res) => {
+      if (req.method === 'GET' || req.method === 'POST' || req.method === 'DELETE') {
+        await transport.handleRequest(req, res)
+      } else {
+        res.writeHead(405, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Method not allowed' }))
+      }
+    })
+
+    httpServer.listen(port, () => {
+      process.stderr.write(`[kairos-mcp] HTTP transport listening on port ${port}\n`)
+    })
+  } else {
+    const transport = new StdioServerTransport()
+    await server.connect(transport)
+  }
 }
 
 main().catch((err: unknown) => {
