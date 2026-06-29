@@ -25,6 +25,7 @@ Build options:
   --dry-run       Generate and validate without deploying
   --name <name>   Override the generated workflow name
   --activate      Activate the workflow after deployment
+  --smoke-test    After deploy, trigger the workflow and verify it runs without error
 
 Patterns options:
   --days <days>   Analysis window (default: 30)
@@ -126,7 +127,7 @@ function createDryRunClient(): Kairos {
 async function handleBuild(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const description = positional.join(' ')
   if (!description) {
-    console.error('Usage: kairos build <description> [--dry-run] [--name <name>] [--activate]')
+    console.error('Usage: kairos build <description> [--dry-run] [--name <name>] [--activate] [--smoke-test]')
     process.exit(1)
   }
 
@@ -139,7 +140,8 @@ async function handleBuild(positional: string[], flags: Record<string, string | 
   const result = await kairos.build(description, {
     dryRun: isDryRun,
     ...(typeof flags['name'] === 'string' ? { name: flags['name'] } : {}),
-    activate: flags['activate'] === true,
+    activate: flags['activate'] === true || flags['smoke-test'] === true,
+    smokeTest: flags['smoke-test'] === true,
   })
 
   await kairos.drain()
@@ -157,6 +159,7 @@ async function handleBuild(positional: string[], flags: Record<string, string | 
     dryRun: result.dryRun,
     credentialsNeeded: result.credentialsNeeded,
     ...(result.dryRun ? { workflow: result.workflow } : {}),
+    ...(result.smokeTest ? { smokeTest: result.smokeTest } : {}),
   }, null, 2))
 }
 
