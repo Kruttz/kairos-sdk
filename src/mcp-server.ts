@@ -90,7 +90,19 @@ function getTelemetryReader(): TelemetryReader | null {
   }
 }
 
+type McpMode = 'readonly' | 'validate' | 'deploy'
+
+function getMcpMode(): McpMode {
+  const mode = process.env['KAIROS_MCP_MODE']?.toLowerCase()
+  if (mode === 'readonly' || mode === 'validate') return mode
+  return 'deploy'
+}
+
 function isAllowed(action: 'deploy' | 'activate' | 'delete'): boolean {
+  // readonly and validate modes block all write ops — mode restriction overrides ALLOW_* flags
+  const mode = getMcpMode()
+  if (mode === 'readonly' || mode === 'validate') return false
+  // deploy mode (default): require explicit opt-in via ALLOW_* flags (preserves existing behavior)
   const key = `KAIROS_MCP_ALLOW_${action.toUpperCase()}`
   return process.env[key] === 'true'
 }
@@ -398,6 +410,10 @@ server.tool(
   async ({ workflow_id, workflow: workflowStr, description: userDescription, kairos_run_id, kairos_secret }) => {
     const authError = checkMcpAuth(kairos_secret)
     if (authError) return authError
+
+    if (!isAllowed('deploy')) {
+      return mcpError(JSON.stringify({ error: 'Replace is disabled. Set KAIROS_MCP_ALLOW_DEPLOY=true or KAIROS_MCP_MODE=deploy to enable.' }))
+    }
 
     let parsed: N8nWorkflow
     try {

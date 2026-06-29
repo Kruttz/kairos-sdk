@@ -225,7 +225,7 @@ describe('Kairos MCP Server', () => {
     expect(content.error).toContain('KAIROS_MCP_ALLOW_DELETE')
   })
 
-  it('kairos_replace rejects invalid JSON', async () => {
+  it('kairos_replace is blocked by default (requires KAIROS_MCP_ALLOW_DEPLOY=true)', async () => {
     client.send({
       jsonrpc: '2.0', id: 9, method: 'tools/call',
       params: { name: 'kairos_replace', arguments: { workflow_id: 'wf-1', workflow: 'not json' } },
@@ -235,10 +235,10 @@ describe('Kairos MCP Server', () => {
     const content = JSON.parse(result.content[0].text)
 
     expect(result.isError).toBe(true)
-    expect(content.error).toContain('Invalid JSON')
+    expect(content.error).toContain('KAIROS_MCP_ALLOW_DEPLOY')
   })
 
-  it('kairos_replace rejects a workflow with validation errors', async () => {
+  it('kairos_replace blocked same as kairos_deploy (consistent permission model)', async () => {
     const bad = JSON.stringify({ name: '', nodes: [], connections: {}, settings: {} })
     client.send({
       jsonrpc: '2.0', id: 10, method: 'tools/call',
@@ -249,7 +249,7 @@ describe('Kairos MCP Server', () => {
     const content = JSON.parse(result.content[0].text)
 
     expect(result.isError).toBe(true)
-    expect(content.error).toContain('validation errors')
+    expect(content.error).toContain('KAIROS_MCP_ALLOW_DEPLOY')
   })
 
   it('kairos_library returns empty array when library has no entries', async () => {
@@ -297,4 +297,91 @@ describe('Kairos MCP Server', () => {
     expect(content.recorded).toBe(true)
     expect(content.libraryId).toBe('nonexistent-id')
   })
+})
+
+describe('Kairos MCP Server — role modes', () => {
+  function startServerWithMode(mode: string): McpClient {
+    const proc = spawn('node', [SERVER_PATH], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, N8N_BASE_URL: undefined, N8N_API_KEY: undefined, KAIROS_MCP_MODE: mode },
+    })
+    let buffer = ''
+    const responses = new Map<number, Record<string, unknown>>()
+    const waiters = new Map<number, (v: Record<string, unknown>) => void>()
+    proc.stdout!.on('data', (data: Buffer) => {
+      buffer += data.toString()
+      const lines = buffer.split('\n')
+      buffer = lines.pop()!
+      for (const line of lines) {
+        if (!line.trim()) continue
+        const parsed = JSON.parse(line) as Record<string, unknown>
+        const id = parsed['id'] as number
+        responses.set(id, parsed)
+        waiters.get(id)?.(parsed)
+        waiters.delete(id)
+      }
+    })
+    return {
+      proc,
+      send(msg: object) { proc.stdin!.write(JSON.stringify(msg) + '\n') },
+      waitForResponse(id: number): Promise<Record<string, unknown>> {
+        const existing = responses.get(id)
+        if (existing) return Promise.resolve(existing)
+        return new Promise((resolve) => { waiters.set(id, resolve) })
+      },
+      close() { proc.kill() },
+    }
+  }
+
+  async function initClient(client: McpClient): Promise<void> {
+    client.send({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1.0' } } })
+    await client.waitForResponse(0)
+  }
+
+  it('KAIROS_MCP_MODE=readonly blocks kairos_deploy', async () => {
+    const c = startServerWithMode('readonly')
+    await initClient(c)
+    c.send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'kairos_deploy', arguments: { workflow: '{}' } } })
+    const resp = await c.waitForResponse(1)
+    const result = resp['result'] as { content: Array<{ text: string }>; isError?: boolean }
+    const content = JSON.parse(result.content[0].text)
+    c.close()
+    expect(result.isError).toBe(true)
+    expect(content.error).toMatch(/disabled/i)
+  }, 15_000)
+
+  it('KAIROS_MCP_MODE=validate allows kairos_validate but blocks kairos_deploy', async () => {
+    const c = startServerWithMode('validate')
+    await initClient(c)
+
+    // validate should work
+    const validWorkflow = JSON.stringify({ name: 'Test', nodes: [{ id: '550e8400-e29b-41d4-a716-446655440001', type: 'n8n-nodes-base.webhook', typeVersion: 2, name: 'Webhook', position: [250, 300], parameters: {} }], connections: {}, settings: { executionOrder: 'v1' } })
+    c.send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'kairos_validate', arguments: { workflow: validWorkflow } } })
+    const validateResp = await c.waitForResponse(1)
+    const validateResult = validateResp['result'] as { content: Array<{ text: string }>; isError?: boolean }
+
+    // deploy should be blocked
+    c.send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'kairos_deploy', arguments: { workflow: '{}' } } })
+    const deployResp = await c.waitForResponse(2)
+    const deployResult = deployResp['result'] as { content: Array<{ text: string }>; isError?: boolean }
+    const deployContent = JSON.parse(deployResult.content[0].text)
+    c.close()
+
+    expect(validateResult.isError).toBeFalsy()
+    expect(deployResult.isError).toBe(true)
+    expect(deployContent.error).toMatch(/disabled/i)
+  }, 15_000)
+
+  it('KAIROS_MCP_MODE=deploy still requires KAIROS_MCP_ALLOW_DEPLOY=true (existing behavior preserved)', async () => {
+    const c = startServerWithMode('deploy')
+    await initClient(c)
+    c.send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'kairos_deploy', arguments: { workflow: '{}' } } })
+    const resp = await c.waitForResponse(1)
+    const result = resp['result'] as { content: Array<{ text: string }>; isError?: boolean }
+    const content = JSON.parse(result.content[0].text)
+    c.close()
+    // deploy mode doesn't auto-allow — still requires explicit ALLOW_DEPLOY=true
+    expect(result.isError).toBe(true)
+    expect(content.error).toContain('KAIROS_MCP_ALLOW_DEPLOY')
+  }, 15_000)
 })
