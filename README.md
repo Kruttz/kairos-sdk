@@ -4,14 +4,14 @@
 [![npm version](https://img.shields.io/npm/v/@kairos-sdk/core)](https://www.npmjs.com/package/@kairos-sdk/core)
 [![npm downloads](https://img.shields.io/npm/dw/@kairos-sdk/core)](https://www.npmjs.com/package/@kairos-sdk/core)
 
-**Turn plain English into deployed n8n workflows — validated, corrected, and deployed in one call.**
+**Kairos is an AI workflow delivery engine for n8n. Give it a business context and it generates, validates, deploys, and documents a complete workflow pack — then learns from real executions and repairs over time.**
 
 ![Kairos SDK Demo](demo.gif)
 
-Kairos turns plain-English workflow descriptions into validated, deployable n8n workflow JSON. Use it as an **MCP server** (connect to Claude Code, Claude Desktop, or any MCP host — your LLM generates, Kairos validates and deploys, no Anthropic API key needed) or as a **TypeScript SDK** for programmatic control (calls Claude internally with a specialized prompt). Either way, workflows pass through a **34-rule structural validator** with automatic correction, and a local workflow library with **hybrid retrieval** (TF-IDF + node fingerprinting + outcome history + cluster reranking) injects past failure patterns into future generations. With a seeded template library, Kairos achieves **100% first-try structural validation pass rate** across 20 benchmark prompts (meaning the generated JSON is structurally valid on the first attempt — runtime behavior depends on your credentials and node configuration).
+Describe your business and Kairos builds a full suite of n8n automations: it plans the workflows, generates each one via Claude, validates every node and connection against **34 structural rules**, deploys to your n8n instance, and hands back a structured document covering credentials needed, data sources, assumptions made, open questions, and a test checklist. Use it as an **MCP server** (connect to Claude Code, Claude Desktop, or any MCP host — no Anthropic API key needed), a **TypeScript SDK**, or a **CLI**. With a seeded template library, Kairos achieves **100% first-try structural validation pass rate** across 20 benchmark prompts.
 
 ```ts
-import { Kairos } from '@kairos-sdk/core'
+import { Kairos, PackBuilder } from '@kairos-sdk/core'
 
 const kairos = new Kairos({
   anthropicApiKey: process.env.ANTHROPIC_API_KEY!,
@@ -19,12 +19,20 @@ const kairos = new Kairos({
   n8nApiKey: process.env.N8N_API_KEY!,
 })
 
+// Build a single workflow
 const result = await kairos.build(
-  'Every morning at 9am, send a message to #daily-digest on Slack saying "Good morning team!"'
+  'Every morning at 9am, send a message to #daily-digest on Slack'
 )
+console.log(result.workflowId)       // deployed workflow ID
+console.log(result.credentialsNeeded) // what still needs configuring
 
-console.log(result.workflowId)      // deployed workflow ID
-console.log(result.credentialsNeeded) // what the user still needs to configure
+// Build a complete workflow pack from a business context
+const builder = new PackBuilder({ anthropicApiKey: process.env.ANTHROPIC_API_KEY!, kairos })
+const plan = await builder.plan('Homecare DME operations')
+const pack = await builder.build(plan)
+console.log(pack.workflows.map(w => w.name))  // all deployed workflow names
+console.log(pack.openQuestions)               // questions to answer before activating
+console.log(pack.testChecklist)               // how to verify each workflow
 ```
 
 ### What Kairos does and does not do
@@ -32,10 +40,12 @@ console.log(result.credentialsNeeded) // what the user still needs to configure
 | Kairos does | Kairos does not guarantee (yet) |
 |---|---|
 | Generates valid n8n workflow JSON | Perfect business logic |
-| Validates structure before deploy (34 rules) | Correct credentials |
-| Syncs node types from your live instance | Runtime success for every API |
-| Learns from prior successful builds | That every workflow matches intent perfectly |
-| Works through MCP, SDK, or CLI | Full replacement for human review |
+| Builds complete workflow packs from business context | Correct credentials or API configs |
+| Validates structure before deploy (34 rules) | Runtime success for every API |
+| Documents assumptions, open questions, and test steps | That every workflow matches intent perfectly |
+| Syncs node types from your live instance | Full replacement for human review |
+| Learns from prior builds and failures | Monitoring after deployment (coming soon) |
+| Works through MCP, SDK, or CLI | — |
 
 ---
 
@@ -323,6 +333,36 @@ const result = await kairos.build(description, {
 
 ---
 
+### `new PackBuilder(options)` + `builder.plan()` + `builder.build()`
+
+Build a complete workflow pack from a plain-English business context.
+
+```ts
+import { Kairos, PackBuilder } from '@kairos-sdk/core'
+
+const kairos = new Kairos({ anthropicApiKey, n8nBaseUrl, n8nApiKey })
+const builder = new PackBuilder({ anthropicApiKey, kairos })
+
+// Step 1 — plan (LLM generates workflow list, assumptions, open questions)
+const plan = await builder.plan('Homecare DME business operations')
+console.log(plan.workflows)      // array of { name, description, purpose }
+console.log(plan.openQuestions)  // questions needing human answers before go-live
+
+// Step 2 — build (deploys each workflow, aggregates credentials and test steps)
+const pack = await builder.build(plan, {
+  dryRun: false,
+  activate: false,
+  onProgress: (wf, i, total) => console.log(`[${i+1}/${total}] ${wf.name}`),
+})
+
+console.log(pack.workflows)       // deployed results with workflowId and credentialsNeeded
+console.log(pack.allCredentials)  // deduped credential list across all workflows
+console.log(pack.sheetsColumns)   // Google Sheets required per sheet
+console.log(pack.testChecklist)   // per-workflow test steps
+```
+
+---
+
 ### Workflow management
 
 ```ts
@@ -421,11 +461,20 @@ try {
 Deploy workflows from the command line — no code required:
 
 ```bash
-# Generate and deploy
+# First-time setup (prompts for credentials, seeds template library, prints Claude Desktop config)
+kairos init
+
+# Generate and deploy a single workflow
 kairos build "Every morning at 9am, send a Slack digest to #daily-updates"
 
-# Dry run only
-kairos build "Monitor a webhook and log payloads" --dry-run
+# Generate a complete workflow pack from a business context
+kairos build-pack "Homecare DME business — patient onboarding, reorder reminders, social media"
+
+# Dry run — plan and validate without deploying
+kairos build-pack "E-commerce store operations" --dry-run
+
+# Skip confirmation prompt and build immediately
+kairos build-pack "Real estate agency operations" --yes
 
 # Seed library with n8n community templates
 kairos sync-templates --max 200
@@ -442,7 +491,64 @@ kairos deactivate <workflow-id>
 kairos delete <workflow-id> --confirm
 ```
 
-Set your credentials as environment variables:
+### What `build-pack` outputs
+
+After building, Kairos prints a structured document and saves a JSON file to `~/.kairos/packs/<name>.json`:
+
+```
+Homecare DME business — Workflow Pack
+══════════════════════════════════════
+
+Workflows Built (6/6)
+──────────────────────────────────────────────────
+  ✓ Weekly Social Media Content  [360Xba7BEQFQUw3v]
+    Generate and email 3 Facebook/Instagram posts for approval each Monday
+  ✓ Group Home Reorder Reminders  [g1Dx5hjTpV4FrkwH]
+    Email facility contacts when supplies are due for reorder
+  ✓ Monthly Newsletter  [lO8YxkDiaGkZiq76]
+    Send AI-generated newsletter to customer mailing list on the 1st
+  ✓ New Customer Welcome Sequence  [PrMj2DwVGfAo6VXq]
+    3-email onboarding sequence triggered by webhook on customer add
+  ✓ Annual Equipment Check-ins  [LZCIedaEnGNsKNRp]
+    Daily check for customers whose equipment delivery was ~1 year ago
+  ✓ Weekly Google Business Post  [IfxKaA1MYZ4Xs3eI]
+    Auto-post educational content to Google Business Profile each Monday
+
+Credentials Needed (connect once in n8n)
+──────────────────────────────────────────────────
+  □ Gmail OAuth2
+  □ Google Sheets OAuth2
+  □ Anthropic Claude API (HTTP Header Auth)
+  □ Google My Business OAuth2
+
+Google Sheets Required
+──────────────────────────────────────────────────
+  □ Facility Contacts: facility_name, contact_name, contact_email, product, reorder_frequency_weeks, last_order_date
+  □ Customer Mailing List: name, email
+
+Assumptions Made
+──────────────────────────────────────────────────
+  - Customer data is maintained in Google Sheets
+  - Gmail is the outbound email platform
+  - Owner approves social posts before publishing
+
+Open Questions (answer before activating)
+──────────────────────────────────────────────────
+  ? What email address should receive social media approval emails?
+  ? What is the brand voice / tone for posts and newsletters?
+  ? Should newsletters require approval before sending to the full list?
+
+Test Checklist
+──────────────────────────────────────────────────
+  Weekly Social Media Content
+    □ Trigger manually — verify approval email arrives with 3 posts
+  Group Home Reorder Reminders
+    □ Add a test row with last_order_date 30 days ago — verify reminder email
+  New Customer Welcome Sequence
+    □ POST {"customer_name":"Test","customer_email":"you@test.com","equipment_type":"wheelchair"} to webhook
+```
+
+Set your credentials as environment variables or run `kairos init`:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
