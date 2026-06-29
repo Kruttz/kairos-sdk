@@ -491,10 +491,30 @@ async function handleInit(): Promise<void> {
   const kairosDir = join(homedir(), '.kairos')
   await mkdir(join(kairosDir, 'telemetry'), { recursive: true })
 
+  const kairosPath = process.execPath
+    ? `${process.execPath.replace(/node$/, 'kairos-mcp')}`
+    : 'kairos-mcp'
+
   console.error('')
   console.error('  Setup complete! Try:')
   console.error('')
   console.error('    kairos build "Send a Slack message when a webhook fires" --dry-run')
+  console.error('')
+  console.error('  ─── Claude Desktop MCP config ───────────────────────────────')
+  console.error('  Add this to ~/Library/Application Support/Claude/claude_desktop_config.json:')
+  console.error('')
+  console.error('  {')
+  console.error('    "mcpServers": {')
+  console.error('      "kairos": {')
+  console.error(`        "command": "${kairosPath}",`)
+  console.error('        "env": {')
+  console.error(`          "ANTHROPIC_API_KEY": "${process.env['ANTHROPIC_API_KEY'] ? '<set>' : 'your-key-here'}",`)
+  console.error(`          "N8N_BASE_URL": "${process.env['N8N_BASE_URL'] ?? 'https://your-n8n-instance'}",`)
+  console.error(`          "N8N_API_KEY": "${process.env['N8N_API_KEY'] ? '<set>' : 'your-n8n-api-key'}"`)
+  console.error('        }')
+  console.error('      }')
+  console.error('    }')
+  console.error('  }')
   console.error('')
 }
 
