@@ -54,11 +54,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Kruttz/kairos-sdk.git"
+    "url": "git+https://github.com/Kruttz/Kairos.git"
   },
-  "homepage": "https://github.com/Kruttz/kairos-sdk#readme",
+  "homepage": "https://github.com/Kruttz/Kairos#readme",
   "bugs": {
-    "url": "https://github.com/Kruttz/kairos-sdk/issues"
+    "url": "https://github.com/Kruttz/Kairos/issues"
   },
   "author": "Jordan Krutman",
   "license": "MIT",
