@@ -11,6 +11,7 @@ Kairos SDK — LLM-powered n8n workflow generation
 Usage:
   kairos init                         First-time setup wizard
   kairos build <description> [options]
+  kairos build-pack <business context> [options]
   kairos replace <n8n-id> <description>
   kairos patterns [options]
   kairos sessions [options]
@@ -26,6 +27,11 @@ Build options:
   --name <name>   Override the generated workflow name
   --activate      Activate the workflow after deployment
   --smoke-test    After deploy, trigger the workflow and verify it runs without error
+
+Build-pack options:
+  --dry-run       Plan and validate without deploying
+  --activate      Activate each workflow after deployment
+  --yes           Skip confirmation prompt and build immediately
 
 Patterns options:
   --days <days>   Analysis window (default: 30)
@@ -402,6 +408,129 @@ async function handleSessions(flags: Record<string, string | boolean>): Promise<
   }
 }
 
+function printPackResult(result: import('./pack/pack-builder.js').WorkflowPackResult): void {
+  const line = '─'.repeat(50)
+  const deployed = result.workflows.filter(w => w.deployed).length
+  const total = result.workflows.length
+
+  console.error(`\n${result.businessContext} — Workflow Pack`)
+  console.error('═'.repeat(Math.min(result.businessContext.length + 18, 60)))
+
+  console.error(`\nWorkflows Built (${deployed}/${total})`)
+  console.error(line)
+  for (const wf of result.workflows) {
+    const icon = wf.error ? '✗' : '✓'
+    const idStr = wf.workflowId ? `  [${wf.workflowId}]` : ''
+    const attStr = wf.generationAttempts > 1 ? `  ${wf.generationAttempts} attempts` : ''
+    console.error(`  ${icon} ${wf.name}${idStr}${attStr}`)
+    console.error(`    ${wf.purpose}`)
+    if (wf.error) console.error(`    Error: ${wf.error}`)
+  }
+
+  if (result.allCredentials.length > 0) {
+    console.error(`\nCredentials Needed (connect once in n8n)`)
+    console.error(line)
+    for (const cred of result.allCredentials) {
+      console.error(`  □ ${cred.service}`)
+    }
+  }
+
+  if (result.sheetsColumns.length > 0) {
+    console.error(`\nGoogle Sheets Required`)
+    console.error(line)
+    for (const sheet of result.sheetsColumns) {
+      console.error(`  □ ${sheet.sheet}: ${sheet.columns.join(', ')}`)
+    }
+  }
+
+  if (result.assumptions.length > 0) {
+    console.error(`\nAssumptions Made`)
+    console.error(line)
+    for (const a of result.assumptions) {
+      console.error(`  - ${a}`)
+    }
+  }
+
+  if (result.openQuestions.length > 0) {
+    console.error(`\nOpen Questions (answer before activating)`)
+    console.error(line)
+    for (const q of result.openQuestions) {
+      console.error(`  ? ${q}`)
+    }
+  }
+
+  if (result.testChecklist.length > 0) {
+    console.error(`\nTest Checklist`)
+    console.error(line)
+    for (const item of result.testChecklist) {
+      console.error(`  ${item.workflow}`)
+      for (const step of item.steps) {
+        console.error(`    □ ${step}`)
+      }
+    }
+  }
+}
+
+async function handleBuildPack(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const businessContext = positional.join(' ')
+  if (!businessContext) {
+    console.error('Usage: kairos build-pack <business context description> [--dry-run] [--activate] [--yes]')
+    process.exit(1)
+  }
+
+  const anthropicKey = getEnvOrExit('ANTHROPIC_API_KEY')
+  const { PackBuilder } = await import('./pack/pack-builder.js')
+  const isDryRun = flags['dry-run'] === true
+  const kairos = isDryRun ? createDryRunClient() : createClient()
+  const builder = new PackBuilder({ anthropicApiKey: anthropicKey, kairos })
+
+  console.error('\nPlanning workflow pack...')
+  const plan = await builder.plan(businessContext)
+
+  console.error(`\n${businessContext} — Planned Workflows (${plan.workflows.length})\n`)
+  for (let i = 0; i < plan.workflows.length; i++) {
+    const wf = plan.workflows[i]!
+    console.error(`  ${i + 1}. ${wf.name}`)
+    console.error(`     ${wf.purpose}`)
+  }
+
+  if (plan.openQuestions.length > 0) {
+    console.error(`\nOpen Questions`)
+    for (const q of plan.openQuestions) console.error(`  ? ${q}`)
+  }
+
+  if (flags['yes'] !== true) {
+    const readline = await import('node:readline')
+    const rl = readline.createInterface({ input: process.stdin, output: process.stderr })
+    const answer = await new Promise<string>(resolve => rl.question('\nBuild all of these? [y/N] ', resolve))
+    rl.close()
+    if (!answer.toLowerCase().startsWith('y')) {
+      console.error('Aborted.')
+      process.exit(0)
+    }
+  }
+
+  console.error('\nBuilding...\n')
+  const result = await builder.build(plan, {
+    dryRun: isDryRun,
+    activate: flags['activate'] === true,
+    onProgress: (wf, i, total) => {
+      console.error(`  [${i + 1}/${total}] ${wf.name}...`)
+    },
+  })
+
+  printPackResult(result)
+
+  const { writeFile, mkdir } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const { homedir } = await import('node:os')
+  const packsDir = join(homedir(), '.kairos', 'packs')
+  await mkdir(packsDir, { recursive: true })
+  const packPath = join(packsDir, `${result.packName}.json`)
+  await writeFile(packPath, JSON.stringify(result, null, 2), 'utf-8')
+  console.error(`\nPack saved to: ${packPath}`)
+}
+
 async function handleInit(): Promise<void> {
   const { writeFile, readFile, mkdir } = await import('node:fs/promises')
   const { join } = await import('node:path')
@@ -532,6 +661,9 @@ async function main(): Promise<void> {
       break
     case 'build':
       await handleBuild(positional, flags)
+      break
+    case 'build-pack':
+      await handleBuildPack(positional, flags)
       break
     case 'replace':
       await handleReplace(positional)
