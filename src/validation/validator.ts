@@ -63,6 +63,7 @@ export class N8nValidator {
     this.checkRule32(workflow, issues)
     this.checkRule33(workflow, issues)
     this.checkRule34(workflow, issues)
+    this.checkRule35(workflow, issues)
 
     // Enrich issues with nodeType by looking up nodeId
     if (Array.isArray(workflow.nodes)) {
@@ -706,6 +707,46 @@ export class N8nValidator {
       const intervals = rule?.['interval']
       if (!Array.isArray(intervals) || intervals.length === 0) {
         this.warn(issues, 33, `Node "${node.name}" scheduleTrigger has no schedule rules defined`, node.id)
+      }
+    }
+  }
+
+  // Rule 35 (WARN): email-sending node with no duplicate-prevention signal
+  private checkRule35(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+
+    const sendNodes = w.nodes.filter(node => {
+      if (node.type === 'n8n-nodes-base.gmail') {
+        const op = (node.parameters as Record<string, unknown> | undefined)?.['operation'] as string | undefined
+        // Default operation on Gmail node is send; also flag explicit send/reply
+        return !op || op === 'send' || op === 'sendEmail' || op === 'reply'
+      }
+      return (
+        node.type === 'n8n-nodes-base.emailSend' ||
+        node.type === 'n8n-nodes-base.sendEmail'
+      )
+    })
+
+    if (sendNodes.length === 0) return
+
+    // Look for idempotency signals anywhere in the workflow JSON
+    const workflowText = JSON.stringify(w).toLowerCase()
+    const IDEMPOTENCY_SIGNALS = [
+      'sent_at', 'last_sent', 'last_reminder', 'processed_at',
+      'already_sent', 'email_sent', 'notified_at', 'reminder_sent',
+      'contacted_at', 'dedupe', 'idempotent',
+    ]
+    const hasIdempotencySignal = IDEMPOTENCY_SIGNALS.some(s => workflowText.includes(s))
+
+    if (!hasIdempotencySignal) {
+      for (const node of sendNodes) {
+        this.warn(
+          issues,
+          35,
+          `Node "${node.name}" sends email but no duplicate-prevention signal detected — ` +
+          `add a sent_at timestamp field, a prior-send IF check, or a deduplication key to avoid repeat sends`,
+          node.id,
+        )
       }
     }
   }

@@ -53,8 +53,12 @@ export type {
   ExecutionFilter,
 } from './types/options.js'
 
-export { PackBuilder } from './pack/pack-builder.js'
-export type { PackPlan, WorkflowPlan, WorkflowPackResult, PackWorkflowResult } from './pack/pack-builder.js'
+export { PackBuilder, derivePackStatus } from './pack/pack-builder.js'
+export type { PackPlan, WorkflowPlan, WorkflowPackResult, PackWorkflowResult, TypedAssumption, AssumptionType, PackStatus } from './pack/pack-builder.js'
+
+export { generateHandoff } from './pack/pack-exporter.js'
+export { validatePack } from './pack/pack-validator.js'
+export type { PackValidationIssue } from './pack/pack-validator.js'
 
 export { TemplateSyncer } from './templates/syncer.js'
 export type { SyncProgress } from './templates/types.js'

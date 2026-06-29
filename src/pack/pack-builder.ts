@@ -2,6 +2,14 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { Kairos } from '../client.js'
 import type { CredentialRequirement } from '../types/result.js'
 
+export type AssumptionType = 'safe' | 'needs_confirmation' | 'blocking'
+export type PackStatus = 'draft' | 'blocked' | 'ready_for_test' | 'ready_for_activation' | 'active' | 'needs_attention'
+
+export interface TypedAssumption {
+  type: AssumptionType
+  text: string
+}
+
 export interface WorkflowPlan {
   name: string
   description: string
@@ -11,8 +19,7 @@ export interface WorkflowPlan {
 export interface PackPlan {
   businessContext: string
   workflows: WorkflowPlan[]
-  assumptions: string[]
-  openQuestions: string[]
+  assumptions: TypedAssumption[]
   sheetsColumns: Array<{ sheet: string; columns: string[] }>
   testChecklist: Array<{ workflow: string; steps: string[] }>
 }
@@ -30,13 +37,31 @@ export interface PackWorkflowResult {
 export interface WorkflowPackResult {
   businessContext: string
   packName: string
+  status: PackStatus
   workflows: PackWorkflowResult[]
   allCredentials: Array<{ service: string; credentialType: string }>
   sheetsColumns: Array<{ sheet: string; columns: string[] }>
-  assumptions: string[]
-  openQuestions: string[]
+  assumptions: TypedAssumption[]
   testChecklist: Array<{ workflow: string; steps: string[] }>
   builtAt: string
+}
+
+export function derivePackStatus(
+  pack: Pick<WorkflowPackResult, 'assumptions' | 'workflows'> & { status?: PackStatus }
+): PackStatus {
+  const hasBlocking = pack.assumptions.some(a => a.type === 'blocking')
+  const hasFailures = pack.workflows.some(w => w.error)
+  const allDeployed = pack.workflows.length > 0 && pack.workflows.every(w => w.deployed)
+  const hasNeedsConfirmation = pack.assumptions.some(a => a.type === 'needs_confirmation')
+
+  // Preserve active status if the pack is still in a healthy deployed state
+  if (pack.status === 'active' && !hasBlocking && !hasFailures && allDeployed) return 'active'
+
+  if (pack.workflows.length === 0 || (!allDeployed && !hasFailures)) return 'draft'
+  if (hasBlocking) return 'blocked'
+  if (hasFailures) return 'needs_attention'
+  if (hasNeedsConfirmation) return 'ready_for_test'
+  return 'ready_for_activation'
 }
 
 const PLAN_PROMPT = `You are planning an n8n workflow automation pack for a business.
@@ -47,6 +72,13 @@ Generate a list of 4-8 n8n workflows that would meaningfully automate this busin
 
 For each workflow, write a detailed build description (2-4 sentences) suitable for passing directly to an n8n workflow generator. Be specific: name the trigger type, data sources (Google Sheets columns if applicable), actions, and outputs.
 
+For assumptions, classify each one:
+- "safe": a clearly reasonable default the business likely expects (e.g. "Schedule runs Monday 9 AM")
+- "needs_confirmation": should be confirmed before going live but won't break things immediately (e.g. "Assumed professional email tone — confirm brand voice")
+- "blocking": MUST be resolved before activation or the workflow will fail, send duplicates, or surprise customers (e.g. "Google Sheet ID not provided", "emails auto-send without approval gate — add confirmation step")
+
+Treat any open question that would block safe deployment as a blocking assumption.
+
 Return ONLY valid JSON with no markdown or extra text:
 {
   "workflows": [
@@ -56,8 +88,9 @@ Return ONLY valid JSON with no markdown or extra text:
       "purpose": "One sentence explaining the business value"
     }
   ],
-  "assumptions": ["Assumption made about the business or its systems"],
-  "openQuestions": ["Question needing a human answer before these workflows go live"],
+  "assumptions": [
+    { "type": "safe" | "needs_confirmation" | "blocking", "text": "Description of the assumption" }
+  ],
   "sheetsColumns": [
     { "sheet": "Sheet name", "columns": ["col1", "col2"] }
   ],
@@ -65,6 +98,24 @@ Return ONLY valid JSON with no markdown or extra text:
     { "workflow": "Workflow name", "steps": ["How to manually test this workflow"] }
   ]
 }`
+
+function normalizeAssumptions(raw: unknown[]): TypedAssumption[] {
+  const validTypes = new Set<string>(['safe', 'needs_confirmation', 'blocking'])
+  return raw.map((a): TypedAssumption => {
+    if (typeof a === 'string') {
+      return { type: 'needs_confirmation', text: a }
+    }
+    if (typeof a === 'object' && a !== null) {
+      const obj = a as Record<string, unknown>
+      const type = typeof obj['type'] === 'string' && validTypes.has(obj['type'])
+        ? (obj['type'] as AssumptionType)
+        : 'needs_confirmation'
+      const text = typeof obj['text'] === 'string' ? obj['text'] : JSON.stringify(obj)
+      return { type, text }
+    }
+    return { type: 'needs_confirmation', text: String(a) }
+  })
+}
 
 export class PackBuilder {
   private client: Anthropic
@@ -89,15 +140,26 @@ export class PackBuilder {
 
     // Strip markdown code fences if present
     const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-    const parsed = JSON.parse(cleaned) as Omit<PackPlan, 'businessContext'>
+    const parsed = JSON.parse(cleaned) as Record<string, unknown>
+
+    const rawAssumptions = Array.isArray(parsed['assumptions']) ? parsed['assumptions'] : []
+    // Fold legacy openQuestions into needs_confirmation assumptions
+    const rawOpenQuestions = Array.isArray(parsed['openQuestions']) ? parsed['openQuestions'] : []
+
+    const assumptions = normalizeAssumptions([...rawAssumptions, ...rawOpenQuestions.map((q: unknown) =>
+      typeof q === 'string' ? { type: 'needs_confirmation', text: q } : q
+    )])
 
     return {
       businessContext,
-      workflows: parsed.workflows ?? [],
-      assumptions: parsed.assumptions ?? [],
-      openQuestions: parsed.openQuestions ?? [],
-      sheetsColumns: parsed.sheetsColumns ?? [],
-      testChecklist: parsed.testChecklist ?? [],
+      workflows: Array.isArray(parsed['workflows']) ? (parsed['workflows'] as WorkflowPlan[]) : [],
+      assumptions,
+      sheetsColumns: Array.isArray(parsed['sheetsColumns'])
+        ? (parsed['sheetsColumns'] as PackPlan['sheetsColumns'])
+        : [],
+      testChecklist: Array.isArray(parsed['testChecklist'])
+        ? (parsed['testChecklist'] as PackPlan['testChecklist'])
+        : [],
     }
   }
 
@@ -109,6 +171,10 @@ export class PackBuilder {
       onProgress?: (workflow: WorkflowPlan, index: number, total: number) => void
     } = {}
   ): Promise<WorkflowPackResult> {
+    const hasBlockingAssumptions = plan.assumptions.some(a => a.type === 'blocking')
+    // Never activate when blocking assumptions exist — safety gate
+    const effectiveActivate = hasBlockingAssumptions ? false : (options.activate ?? false)
+
     const results: PackWorkflowResult[] = []
     const credentialMap = new Map<string, { service: string; credentialType: string }>()
 
@@ -120,7 +186,7 @@ export class PackBuilder {
         const result = await this.kairos.build(wf.description, {
           name: wf.name,
           dryRun: options.dryRun ?? false,
-          activate: options.activate ?? false,
+          activate: effectiveActivate,
         })
 
         for (const cred of result.credentialsNeeded) {
@@ -153,16 +219,18 @@ export class PackBuilder {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '')
 
-    return {
+    const partial = {
       businessContext: plan.businessContext,
       packName,
+      status: 'draft' as PackStatus,
       workflows: results,
       allCredentials: Array.from(credentialMap.values()),
       sheetsColumns: plan.sheetsColumns,
       assumptions: plan.assumptions,
-      openQuestions: plan.openQuestions,
       testChecklist: plan.testChecklist,
       builtAt: new Date().toISOString(),
     }
+
+    return { ...partial, status: derivePackStatus(partial) }
   }
 }

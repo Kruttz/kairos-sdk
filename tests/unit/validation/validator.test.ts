@@ -1321,4 +1321,93 @@ describe('N8nValidator', () => {
     const result = validator.validate(w)
     expect(result.issues.some((i) => i.rule === 34)).toBe(false)
   })
+
+  // Rule 35 — email-sending node with no duplicate-prevention signal
+  it('rule 35: warns when Gmail send node has no idempotency signal', () => {
+    const w = { ...baseWorkflow(), nodes: [...baseWorkflow().nodes] }
+    w.nodes.push({
+      id: 'aaaa0035-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Send Email',
+      type: 'n8n-nodes-base.gmail',
+      typeVersion: 2,
+      position: [500, 300],
+      parameters: { operation: 'send', to: 'customer@example.com', subject: 'Hello' },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 35)).toBe(true)
+    const issue = result.issues.find((i) => i.rule === 35)!
+    expect(issue.severity).toBe('warn')
+  })
+
+  it('rule 35: warns for emailSend node with no idempotency signal', () => {
+    const w = { ...baseWorkflow(), nodes: [...baseWorkflow().nodes] }
+    w.nodes.push({
+      id: 'aaaa0035-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Email Send',
+      type: 'n8n-nodes-base.emailSend',
+      typeVersion: 2,
+      position: [500, 300],
+      parameters: { toEmail: 'test@example.com' },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 35)).toBe(true)
+  })
+
+  it('rule 35: no warning when sent_at field is present in parameters', () => {
+    const w = { ...baseWorkflow(), nodes: [...baseWorkflow().nodes] }
+    w.nodes.push({
+      id: 'aaaa0035-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Send Email',
+      type: 'n8n-nodes-base.gmail',
+      typeVersion: 2,
+      position: [500, 300],
+      parameters: { operation: 'send', to: 'customer@example.com', subject: 'Hello' },
+    })
+    // Simulate a Set node that writes sent_at
+    w.nodes.push({
+      id: 'aaaa0035-aaaa-4aaa-aaaa-aaaaaaaaaaad',
+      name: 'Mark Sent',
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3,
+      position: [700, 300],
+      parameters: {
+        assignments: { assignments: [{ id: '1', name: 'sent_at', value: '={{ $now }}', type: 'string' }] },
+      },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 35)).toBe(false)
+  })
+
+  it('rule 35: no warning for Gmail node with non-send operation (getEmail)', () => {
+    const w = { ...baseWorkflow(), nodes: [...baseWorkflow().nodes] }
+    w.nodes.push({
+      id: 'aaaa0035-aaaa-4aaa-aaaa-aaaaaaaaaaae',
+      name: 'Get Email',
+      type: 'n8n-nodes-base.gmail',
+      typeVersion: 2,
+      position: [500, 300],
+      parameters: { operation: 'getEmail', messageId: '{{ $json.id }}' },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 35)).toBe(false)
+  })
+
+  it('rule 35: no warning when dedupe keyword present in workflow', () => {
+    const w = { ...baseWorkflow(), nodes: [...baseWorkflow().nodes] }
+    w.nodes.push({
+      id: 'aaaa0035-aaaa-4aaa-aaaa-aaaaaaaaaaaf',
+      name: 'Send Email',
+      type: 'n8n-nodes-base.gmail',
+      typeVersion: 2,
+      position: [500, 300],
+      parameters: { operation: 'send', subject: 'dedupe check newsletter' },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 35)).toBe(false)
+  })
+
+  it('rule 35: no warning for non-email workflows', () => {
+    const result = validator.validate(baseWorkflow())
+    expect(result.issues.some((i) => i.rule === 35)).toBe(false)
+  })
 })

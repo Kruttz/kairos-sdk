@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { PackBuilder } from '../../../src/pack/pack-builder.js'
+import { PackBuilder, derivePackStatus } from '../../../src/pack/pack-builder.js'
 import type { Kairos } from '../../../src/client.js'
+import type { WorkflowPackResult, TypedAssumption } from '../../../src/pack/pack-builder.js'
+
+const SAFE_ASSUMPTION: TypedAssumption = { type: 'safe', text: 'Customer emails are stored in Google Sheets' }
+const CONFIRM_ASSUMPTION: TypedAssumption = { type: 'needs_confirmation', text: 'What should the newsletter tone be?' }
+const BLOCKING_ASSUMPTION: TypedAssumption = { type: 'blocking', text: 'Google Sheet ID not provided' }
 
 const MOCK_PLAN_RESPONSE = {
   workflows: [
@@ -15,8 +20,7 @@ const MOCK_PLAN_RESPONSE = {
       purpose: 'Onboard new customers automatically.',
     },
   ],
-  assumptions: ['Customer emails are stored in Google Sheets', 'Gmail is the sending platform'],
-  openQuestions: ['What should the newsletter tone be?', 'Who approves content before sending?'],
+  assumptions: [SAFE_ASSUMPTION, CONFIRM_ASSUMPTION],
   sheetsColumns: [{ sheet: 'Customers', columns: ['name', 'email'] }],
   testChecklist: [
     { workflow: 'Weekly Newsletter', steps: ['Trigger manually and check inbox'] },
@@ -57,20 +61,20 @@ describe('PackBuilder', () => {
       anthropicApiKey: 'sk-ant-test',
       kairos: makeMockKairos(),
     })
-    // Replace internal Anthropic client with mock
     ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(
       JSON.stringify(MOCK_PLAN_RESPONSE)
     )
   })
 
   describe('plan()', () => {
-    it('returns a structured plan from LLM response', async () => {
+    it('returns a structured plan with typed assumptions', async () => {
       const plan = await builder.plan('Test DME business')
       expect(plan.businessContext).toBe('Test DME business')
       expect(plan.workflows).toHaveLength(2)
       expect(plan.workflows[0]!.name).toBe('Weekly Newsletter')
       expect(plan.assumptions).toHaveLength(2)
-      expect(plan.openQuestions).toHaveLength(2)
+      expect(plan.assumptions[0]!.type).toBe('safe')
+      expect(plan.assumptions[1]!.type).toBe('needs_confirmation')
       expect(plan.sheetsColumns).toHaveLength(1)
       expect(plan.testChecklist).toHaveLength(2)
     })
@@ -88,9 +92,31 @@ describe('PackBuilder', () => {
       ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify(minimal))
       const plan = await builder.plan('Minimal business')
       expect(plan.assumptions).toEqual([])
-      expect(plan.openQuestions).toEqual([])
       expect(plan.sheetsColumns).toEqual([])
       expect(plan.testChecklist).toEqual([])
+    })
+
+    it('normalizes legacy string assumptions to needs_confirmation', async () => {
+      const legacy = { ...MOCK_PLAN_RESPONSE, assumptions: ['Old string assumption'] }
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify(legacy))
+      const plan = await builder.plan('Legacy format')
+      expect(plan.assumptions[0]!.type).toBe('needs_confirmation')
+      expect(plan.assumptions[0]!.text).toBe('Old string assumption')
+    })
+
+    it('folds legacy openQuestions into needs_confirmation assumptions', async () => {
+      const withOpenQ = {
+        workflows: MOCK_PLAN_RESPONSE.workflows,
+        assumptions: [],
+        openQuestions: ['Who approves content?'],
+        sheetsColumns: [],
+        testChecklist: [],
+      }
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify(withOpenQ))
+      const plan = await builder.plan('Legacy with openQuestions')
+      expect(plan.assumptions).toHaveLength(1)
+      expect(plan.assumptions[0]!.type).toBe('needs_confirmation')
+      expect(plan.assumptions[0]!.text).toBe('Who approves content?')
     })
   })
 
@@ -103,6 +129,52 @@ describe('PackBuilder', () => {
       expect(result.workflows[0]!.deployed).toBe(true)
       expect(result.workflows[0]!.workflowId).toBe('wf-123')
       expect(result.businessContext).toBe('Test DME')
+    })
+
+    it('derives status as ready_for_test when needs_confirmation assumptions exist', async () => {
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test DME' }
+      const result = await builder.build(plan)
+      expect(result.status).toBe('ready_for_test')
+    })
+
+    it('derives status as ready_for_activation when only safe assumptions exist', async () => {
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test DME', assumptions: [SAFE_ASSUMPTION] }
+      const result = await builder.build(plan)
+      expect(result.status).toBe('ready_for_activation')
+    })
+
+    it('derives status as blocked when blocking assumptions exist', async () => {
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test', assumptions: [BLOCKING_ASSUMPTION] }
+      const result = await builder.build(plan)
+      expect(result.status).toBe('blocked')
+    })
+
+    it('blocks activation when blocking assumptions exist even if --activate passed', async () => {
+      const mockKairos = makeMockKairos()
+      builder = new PackBuilder({ anthropicApiKey: 'sk-ant-test', kairos: mockKairos })
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify(MOCK_PLAN_RESPONSE))
+
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test', assumptions: [BLOCKING_ASSUMPTION] }
+      await builder.build(plan, { activate: true })
+
+      expect(mockKairos.build).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ activate: false })
+      )
+    })
+
+    it('passes activate:true when no blocking assumptions and --activate set', async () => {
+      const mockKairos = makeMockKairos()
+      builder = new PackBuilder({ anthropicApiKey: 'sk-ant-test', kairos: mockKairos })
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify(MOCK_PLAN_RESPONSE))
+
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test', assumptions: [SAFE_ASSUMPTION] }
+      await builder.build(plan, { activate: true })
+
+      expect(mockKairos.build).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ activate: true })
+      )
     })
 
     it('deduplicates credentials across workflows', async () => {
@@ -140,6 +212,7 @@ describe('PackBuilder', () => {
       expect(result.workflows[0]!.deployed).toBe(true)
       expect(result.workflows[1]!.deployed).toBe(false)
       expect(result.workflows[1]!.error).toBe('n8n connection refused')
+      expect(result.status).toBe('needs_attention')
     })
 
     it('generates a slug pack name from business context', async () => {
@@ -164,7 +237,7 @@ describe('PackBuilder', () => {
         JSON.stringify(MOCK_PLAN_RESPONSE)
       )
 
-      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test' }
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test', assumptions: [] }
       await builder.build(plan, { dryRun: true, activate: false })
 
       expect(mockKairos.build).toHaveBeenCalledWith(
@@ -181,6 +254,56 @@ describe('PackBuilder', () => {
       const builtAt = new Date(result.builtAt).getTime()
       expect(builtAt).toBeGreaterThanOrEqual(before)
       expect(builtAt).toBeLessThanOrEqual(after)
+    })
+  })
+
+  describe('derivePackStatus()', () => {
+    function makePack(overrides: Partial<WorkflowPackResult>): WorkflowPackResult {
+      return {
+        businessContext: 'Test',
+        packName: 'test',
+        status: 'draft',
+        workflows: [{ name: 'W', purpose: 'P', workflowId: 'id', deployed: true, generationAttempts: 1, credentialsNeeded: [] }],
+        allCredentials: [],
+        sheetsColumns: [],
+        assumptions: [],
+        testChecklist: [],
+        builtAt: new Date().toISOString(),
+        ...overrides,
+      }
+    }
+
+    it('returns draft when no workflows deployed', () => {
+      expect(derivePackStatus(makePack({ workflows: [] }))).toBe('draft')
+    })
+
+    it('returns blocked when blocking assumptions exist', () => {
+      expect(derivePackStatus(makePack({ assumptions: [BLOCKING_ASSUMPTION] }))).toBe('blocked')
+    })
+
+    it('returns needs_attention when a workflow has an error', () => {
+      const pack = makePack({
+        workflows: [{ name: 'W', purpose: 'P', workflowId: null, deployed: false, generationAttempts: 0, credentialsNeeded: [], error: 'failed' }],
+      })
+      expect(derivePackStatus(pack)).toBe('needs_attention')
+    })
+
+    it('returns ready_for_test when needs_confirmation assumptions exist', () => {
+      expect(derivePackStatus(makePack({ assumptions: [CONFIRM_ASSUMPTION] }))).toBe('ready_for_test')
+    })
+
+    it('returns ready_for_activation when only safe assumptions and all deployed', () => {
+      expect(derivePackStatus(makePack({ assumptions: [SAFE_ASSUMPTION] }))).toBe('ready_for_activation')
+    })
+
+    it('preserves active status when conditions still hold', () => {
+      const pack = makePack({ status: 'active', assumptions: [SAFE_ASSUMPTION] })
+      expect(derivePackStatus(pack)).toBe('active')
+    })
+
+    it('downgrades active to blocked when a blocking assumption is added', () => {
+      const pack = makePack({ status: 'active', assumptions: [BLOCKING_ASSUMPTION] })
+      expect(derivePackStatus(pack)).toBe('blocked')
     })
   })
 })

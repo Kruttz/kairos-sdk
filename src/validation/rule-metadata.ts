@@ -1,6 +1,6 @@
 export type PipelineStage = 'node_generation' | 'credential_injection' | 'connection_wiring' | 'workflow_structure' | 'expression_syntax'
 
-export const VALIDATOR_RULE_IDS: number[] = Array.from({ length: 34 }, (_, i) => i + 1)
+export const VALIDATOR_RULE_IDS: number[] = Array.from({ length: 35 }, (_, i) => i + 1)
 
 export const RULE_PIPELINE_STAGES: Record<number, PipelineStage> = {
   1: 'node_generation',
@@ -37,6 +37,7 @@ export const RULE_PIPELINE_STAGES: Record<number, PipelineStage> = {
   32: 'node_generation',
   33: 'node_generation',
   34: 'node_generation',
+  35: 'node_generation',
 }
 
 export interface RuleExample {
@@ -93,6 +94,10 @@ export const RULE_EXAMPLES: Record<number, RuleExample> = {
     bad: '"path": "/my webhook"',
     good: '"path": "my-webhook"',
   },
+  35: {
+    bad: '"type": "n8n-nodes-base.gmail", "parameters": { "operation": "send" }  // no sent_at tracking',
+    good: 'Add a Set node after send that writes "sent_at": "={{ $now }}" back to the sheet, or an IF node that checks sent_at before sending',
+  },
 }
 
 export const RULE_MITIGATIONS: Record<number, string> = {
@@ -130,4 +135,5 @@ export const RULE_MITIGATIONS: Record<number, string> = {
   32: 'Add field assignments to the set node — assignments.assignments array must be non-empty for typeVersion 3.x',
   33: 'Add at least one schedule rule to scheduleTrigger — rule.interval array must have at least one entry',
   34: 'Webhook path must be a relative path without spaces, leading slashes, or protocol prefixes (e.g. "my-hook")',
+  35: 'Add duplicate-prevention to email-sending workflows: a sent_at timestamp field updated after each send, or an IF node that checks prior-send status before sending',
 }

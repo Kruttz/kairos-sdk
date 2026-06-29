@@ -12,6 +12,8 @@ Usage:
   kairos init                         First-time setup wizard
   kairos build <description> [options]
   kairos build-pack <business context> [options]
+  kairos pack export <name> [--handoff]
+  kairos validate-pack <name>
   kairos replace <n8n-id> <description>
   kairos patterns [options]
   kairos sessions [options]
@@ -30,8 +32,13 @@ Build options:
 
 Build-pack options:
   --dry-run       Plan and validate without deploying
-  --activate      Activate each workflow after deployment
+  --activate      Activate each workflow after deployment (blocked if blocking assumptions exist)
   --yes           Skip confirmation prompt and build immediately
+
+Pack options:
+  pack export <name>          Print the saved pack as JSON
+  pack export <name> --handoff  Generate a client-ready Markdown handoff document
+  validate-pack <name>        Cross-workflow safety check before activation
 
 Patterns options:
   --days <days>   Analysis window (default: 30)
@@ -415,6 +422,16 @@ function printPackResult(result: import('./pack/pack-builder.js').WorkflowPackRe
 
   console.error(`\n${result.businessContext} — Workflow Pack`)
   console.error('═'.repeat(Math.min(result.businessContext.length + 18, 60)))
+  console.error(`Status: ${result.status}`)
+
+  const blocking = result.assumptions.filter(a => a.type === 'blocking')
+  if (blocking.length > 0) {
+    console.error(`\n⚠ Blocking Issues (${blocking.length}) — resolve before activating`)
+    console.error(line)
+    for (const a of blocking) {
+      console.error(`  ✗ ${a.text}`)
+    }
+  }
 
   console.error(`\nWorkflows Built (${deployed}/${total})`)
   console.error(line)
@@ -443,19 +460,21 @@ function printPackResult(result: import('./pack/pack-builder.js').WorkflowPackRe
     }
   }
 
-  if (result.assumptions.length > 0) {
-    console.error(`\nAssumptions Made`)
+  const needsConfirmation = result.assumptions.filter(a => a.type === 'needs_confirmation')
+  if (needsConfirmation.length > 0) {
+    console.error(`\nNeeds Confirmation Before Going Live`)
     console.error(line)
-    for (const a of result.assumptions) {
-      console.error(`  - ${a}`)
+    for (const a of needsConfirmation) {
+      console.error(`  ? ${a.text}`)
     }
   }
 
-  if (result.openQuestions.length > 0) {
-    console.error(`\nOpen Questions (answer before activating)`)
+  const safe = result.assumptions.filter(a => a.type === 'safe')
+  if (safe.length > 0) {
+    console.error(`\nSafe Assumptions`)
     console.error(line)
-    for (const q of result.openQuestions) {
-      console.error(`  ? ${q}`)
+    for (const a of safe) {
+      console.error(`  - ${a.text}`)
     }
   }
 
@@ -494,9 +513,15 @@ async function handleBuildPack(positional: string[], flags: Record<string, strin
     console.error(`     ${wf.purpose}`)
   }
 
-  if (plan.openQuestions.length > 0) {
-    console.error(`\nOpen Questions`)
-    for (const q of plan.openQuestions) console.error(`  ? ${q}`)
+  const planBlocking = plan.assumptions.filter(a => a.type === 'blocking')
+  const planNeedsConfirmation = plan.assumptions.filter(a => a.type === 'needs_confirmation')
+  if (planBlocking.length > 0) {
+    console.error(`\nBlocking Issues (resolve before activation)`)
+    for (const a of planBlocking) console.error(`  ✗ ${a.text}`)
+  }
+  if (planNeedsConfirmation.length > 0) {
+    console.error(`\nNeeds Confirmation`)
+    for (const a of planNeedsConfirmation) console.error(`  ? ${a.text}`)
   }
 
   if (flags['yes'] !== true) {
@@ -529,6 +554,89 @@ async function handleBuildPack(positional: string[], flags: Record<string, strin
   const packPath = join(packsDir, `${result.packName}.json`)
   await writeFile(packPath, JSON.stringify(result, null, 2), 'utf-8')
   console.error(`\nPack saved to: ${packPath}`)
+}
+
+async function handlePackExport(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const packName = positional[0]
+  if (!packName) {
+    console.error('Usage: kairos pack export <pack-name> [--handoff]')
+    process.exit(1)
+  }
+
+  const { readFile } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const { homedir } = await import('node:os')
+
+  const packPath = join(homedir(), '.kairos', 'packs', `${packName}.json`)
+
+  let pack: import('./pack/pack-builder.js').WorkflowPackResult
+  try {
+    const content = await readFile(packPath, 'utf-8')
+    pack = JSON.parse(content) as import('./pack/pack-builder.js').WorkflowPackResult
+  } catch {
+    console.error(`Pack not found: ${packPath}`)
+    console.error('Run "kairos build-pack <context>" to create one.')
+    process.exit(1)
+  }
+
+  if (flags['handoff'] === true) {
+    const { generateHandoff } = await import('./pack/pack-exporter.js')
+    console.log(generateHandoff(pack))
+  } else {
+    console.log(JSON.stringify(pack, null, 2))
+  }
+}
+
+async function handleValidatePack(positional: string[]): Promise<void> {
+  const packName = positional[0]
+  if (!packName) {
+    console.error('Usage: kairos validate-pack <pack-name>')
+    process.exit(1)
+  }
+
+  const { readFile } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const { homedir } = await import('node:os')
+
+  const packPath = join(homedir(), '.kairos', 'packs', `${packName}.json`)
+
+  let pack: import('./pack/pack-builder.js').WorkflowPackResult
+  try {
+    const content = await readFile(packPath, 'utf-8')
+    pack = JSON.parse(content) as import('./pack/pack-builder.js').WorkflowPackResult
+  } catch {
+    console.error(`Pack not found: ${packPath}`)
+    console.error('Run "kairos build-pack <context>" to create one.')
+    process.exit(1)
+  }
+
+  const { validatePack } = await import('./pack/pack-validator.js')
+  const issues = validatePack(pack)
+
+  const packLabel = `"${packName}" (status: ${pack.status})`
+
+  if (issues.length === 0) {
+    console.log(`✓ Pack ${packLabel} passed all cross-workflow checks`)
+    return
+  }
+
+  const errors = issues.filter(i => i.severity === 'error')
+  const warnings = issues.filter(i => i.severity === 'warning')
+
+  console.log(`\n${packName} — Pack Validation`)
+  console.log('─'.repeat(50))
+  console.log(`Status: ${pack.status}`)
+  console.log(`Issues: ${errors.length} error(s), ${warnings.length} warning(s)`)
+  console.log('')
+
+  for (const issue of errors) {
+    console.log(`  ✗ [error]   ${issue.message}`)
+  }
+  for (const issue of warnings) {
+    console.log(`  ⚠ [warning] ${issue.message}`)
+  }
+
+  if (errors.length > 0) process.exit(1)
 }
 
 async function handleInit(): Promise<void> {
@@ -691,6 +799,21 @@ async function main(): Promise<void> {
       break
     case 'sync-templates':
       await handleSyncTemplates(flags)
+      break
+    case 'pack': {
+      const subcommand = positional[0]
+      const subPositional = positional.slice(1)
+      if (subcommand === 'export') {
+        await handlePackExport(subPositional, flags)
+      } else {
+        console.error(`Unknown pack subcommand: ${subcommand ?? '(none)'}`)
+        console.error('Available: kairos pack export <name> [--handoff]')
+        process.exit(1)
+      }
+      break
+    }
+    case 'validate-pack':
+      await handleValidatePack(positional)
       break
     default:
       console.error(`Unknown command: ${command}`)
